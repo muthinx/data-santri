@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <title>Pondok Pesantren - Sistem Informasi</title>
+    <link rel="stylesheet" href="css/style.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+</head>
+<body>
+    <!-- Login Container -->
+    <div id="login-container" class="login-container">
+        <div class="login-card">
+            <div class="login-icon">
+                <i class="fas fa-mosque"></i>
+            </div>
+            <h2>PDF ELL FIRDAUS</h2>
+            <p class="login-subtitle">Silakan login untuk melanjutkan</p>
+            <input type="email" id="login-email" placeholder="Email" autocomplete="email">
+            <input type="password" id="login-password" placeholder="Password" autocomplete="current-password">
+            <button id="login-btn">Login</button>
+            <p class="toggle-auth">Belum punya akun? <span id="to-signup">Daftar</span></p>
+        </div>
+        <div class="login-card" id="signup-card" style="display:none">
+            <div class="login-icon">
+                <i class="fas fa-user-plus"></i>
+            </div>
+            <h2>Daftar Akun</h2>
+            <input type="text" id="signup-name" placeholder="Nama Lengkap">
+            <input type="email" id="signup-email" placeholder="Email">
+            <input type="password" id="signup-password" placeholder="Password">
+            <button id="signup-btn">Daftar</button>
+            <p class="toggle-auth">Sudah punya akun? <span id="to-login">Login</span></p>
+        </div>
+    </div>
+
+    <!-- App Container -->
+    <div id="app-container" style="display:none">
+        <!-- Sidebar -->
+        <div class="sidebar" id="sidebar">
+            <div class="sidebar-header">
+                <div class="logo">
+                    <i class="fas fa-mosque"></i>
+                    <span>PDF Ell Firdaus</span>
+                </div>
+            </div>
+            <nav>
+                <a href="#" data-page="dashboard"><i class="fas fa-tachometer-alt"></i> <span>Dashboard</span></a>
+                <a href="#" data-page="santri"><i class="fas fa-users"></i> <span>Santri</span></a>
+                <a href="#" data-page="keuangan"><i class="fas fa-coins"></i> <span>Keuangan</span></a>
+                <a href="#" data-page="asrama"><i class="fas fa-building"></i> <span>Asrama</span></a>
+                <a href="#" data-page="kelompokngaji"><i class="fas fa-book-quran"></i> <span>Kelompok Ngaji</span></a>
+                <a href="#" data-page="about"><i class="fas fa-info-circle"></i> <span>About</span></a>
+            </nav>
+            <div class="sidebar-footer">
+                <div class="user-info">
+                    <i class="fas fa-user-circle"></i>
+                    <span id="user-name-display"></span>
+                </div>
+                <button id="logout-btn"><i class="fas fa-sign-out-alt"></i> <span>Logout</span></button>
+            </div>
+        </div>
+        
+        <!-- Main Content -->
+        <div class="main-content">
+            <div class="header">
+                <div class="header-left">
+                    <button id="mobileMenuToggle" class="mobile-menu-toggle" aria-label="Menu">
+                        <i class="fas fa-bars"></i>
+                    </button>
+                    <h2 id="page-title">Dashboard</h2>
+                </div>
+                <div class="header-right">
+                    <button id="darkModeToggle" class="dark-mode-toggle" aria-label="Dark mode">
+                        <i class="fas fa-moon"></i>
+                    </button>
+                </div>
+            </div>
+            <div class="content" id="main-content">
+                <!-- Dinamis innerHTML -->
+            </div>
+        </div>
+    </div>
+
+    <!-- Overlay untuk sidebar di mobile -->
+    <div class="sidebar-overlay" id="sidebarOverlay"></div>
+
+    <!-- Semua JavaScript dipindahkan ke src/app.js -->
+    <script type="module" src="src/app.js"></script>
+</body>
+</html>
