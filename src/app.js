@@ -1,3 +1,4 @@
+import './utils/dialog.js';
 import { auth, db } from './firebase.js';
 import { signInWithEmailAndPassword, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
 import { doc, getDoc, setDoc } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
@@ -9,6 +10,7 @@ import { loadKeuangan } from './page/keuangan.js';
 import { loadAsrama } from './page/asrama.js';
 import { loadKelompokNgaji } from './page/kelompokngaji.js';
 import { loadAbout } from './page/about.js';
+import { loadObrolan } from './page/obrolan.js';
 
 const pages = {
     dashboard: loadDashboard,
@@ -16,6 +18,7 @@ const pages = {
     keuangan: loadKeuangan,
     asrama: loadAsrama,
     kelompokngaji: loadKelompokNgaji,
+    obrolan: loadObrolan,
     about: loadAbout
 };
 
@@ -102,9 +105,18 @@ async function loadPage(pageName) {
     const container = document.getElementById('main-content');
     const titleMap = {
         dashboard: 'Dashboard', santri: 'Data Santri', keuangan: 'Keuangan',
-        asrama: 'Manajemen Asrama', kelompokngaji: 'Kelompok Ngaji & Belajar', about: 'Tentang Aplikasi'
+        asrama: 'Manajemen Asrama', kelompokngaji: 'Kelompok Ngaji & Belajar', 
+        about: 'Tentang Aplikasi', obrolan: 'Obrolan'
     };
     document.getElementById('page-title').innerText = titleMap[pageName] || pageName;
+    
+    // Tambah/hapus class untuk halaman obrolan
+    if (pageName === 'obrolan') {
+        document.body.classList.add('page-chat');
+    } else {
+        document.body.classList.remove('page-chat');
+    }
+    
     if (pages[pageName]) {
         await pages[pageName](container);
     } else {
