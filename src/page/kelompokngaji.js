@@ -72,12 +72,12 @@ function showKelompokForm(editData = null) {
         deleteBtn.textContent = 'Hapus';
         deleteBtn.className = 'btn-danger';
         deleteBtn.onclick = async () => {
-            if (confirm('Hapus kelompok ini? Data santri yang terkait tidak akan terhapus.')) {
+            if (await window.customConfirm('Hapus kelompok ini? Data santri yang terkait tidak akan terhapus.')) {
                 try {
                     await deleteDoc(doc(db, "kelompok", currentKelompokId));
-                    alert('Kelompok dihapus');
+                    await window.customAlert('Kelompok dihapus');
                     hideKelompokForm();
-                } catch (err) { alert(err.message); }
+                } catch (err) { await window.customAlert(err.message); }
             }
         };
         formButtons.appendChild(deleteBtn);
@@ -136,7 +136,7 @@ function buildKelompokFormHtml(editData = null) {
 
 async function saveKelompok() {
     const nama = document.getElementById('kelompokNama').value.trim();
-    if (!nama) return alert("Nama kelompok harus diisi");
+    if (!nama) return await window.customAlert("Nama kelompok harus diisi");
     const data = {
         nama,
         jenis: document.getElementById('kelompokJenis').value,
@@ -145,13 +145,13 @@ async function saveKelompok() {
     try {
         if (currentKelompokId) {
             await updateDoc(doc(db, "kelompok", currentKelompokId), data);
-            alert("Kelompok diupdate");
+            await window.customAlert("Kelompok diupdate");
         } else {
             await addDoc(collection(db, "kelompok"), data);
-            alert("Kelompok ditambahkan");
+            await window.customAlert("Kelompok ditambahkan");
         }
         hideKelompokForm();
-    } catch (err) { alert(err.message); }
+    } catch (err) { await window.customAlert(err.message); }
 }
 
 async function showAnggotaKelompok(kelompokNama, kelompokJenis) {
@@ -224,7 +224,7 @@ function renderKelompokList(kelompoks) {
     document.querySelectorAll('.hapusKelompok').forEach(btn => {
         btn.addEventListener('click', async () => {
             const id = btn.dataset.id;
-            if (confirm("Hapus kelompok ini?")) {
+            if (await window.customConfirm("Hapus kelompok ini?")) {
                 await deleteDoc(doc(db, "kelompok", id));
             }
         });
