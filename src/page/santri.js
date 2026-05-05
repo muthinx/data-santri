@@ -1,8 +1,9 @@
 import { db } from '../firebase.js';
-import { collection, addDoc, updateDoc, deleteDoc, doc, onSnapshot, getDoc, getDocs, writeBatch } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+import { collection, addDoc, updateDoc, deleteDoc, doc, onSnapshot, getDoc, getDocs, writeBatch, query, where } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
 
 let currentEditId = null;
 let unsubscribe = null;
+let allSantriData = [];
 
 export function loadSantri(container) {
     renderSantriPage(container);
@@ -13,7 +14,11 @@ function renderSantriPage(container) {
     container.innerHTML = `
         <div id="santri-header-actions">
             <div class="header-left-buttons">
-                <button id="btnTambahSantriBaru" class="btn-primary"><i class="fas fa-plus"></i> Tambah Santri</button>
+                <button id="btnTambahSantriBaru" class="btn-primary"><i class="fas fa-plus"></i></button>
+            </div>
+            <div class="search-wrapper">
+                <i class="fas fa-search search-icon"></i>
+                <input type="text" id="searchSantri" placeholder="Cari nama santri..." class="search-input">
             </div>
             <div class="header-right-buttons desktop-only">
                 <button id="btnExportCSV" class="btn-secondary"><i class="fas fa-download"></i> Ekspor CSV</button>
@@ -26,6 +31,10 @@ function renderSantriPage(container) {
     `;
     document.getElementById('btnTambahSantriBaru').onclick = () => showForm();
     document.getElementById('btnExportCSV').onclick = () => exportToCSV();
+    const searchInput = document.getElementById('searchSantri');
+    if (searchInput) {
+        searchInput.addEventListener('input', (e) => filterSantriTable(e.target.value));
+    }
     const importBtn = document.getElementById('btnImportCSV');
     const fileInput = document.getElementById('fileImportCSV');
     importBtn.onclick = () => fileInput.click();
@@ -69,6 +78,28 @@ function showForm(editData = null) {
     formContainer.style.display = 'block';
     tableContainer.style.display = 'none';
     formContainer.innerHTML = buildFormHtml(editData);
+
+    (async () => {
+        const selectedAsrama = editData?.kepesantrenan?.asrama || '';
+        const asramaSelect = document.getElementById('asrama');
+        asramaSelect.innerHTML = await loadAsramaOptions(selectedAsrama);
+        
+        const selectedNgaji = editData?.kepesantrenan?.kelompokNgaji || '';
+        const ngajiSelect = document.getElementById('kelompokNgaji');
+        ngajiSelect.innerHTML = await loadKelompokOptions('Ngaji', selectedNgaji);
+        
+        const selectedBelajar = editData?.kepesantrenan?.kelompokBelajar || '';
+        const belajarSelect = document.getElementById('kelompokBelajar');
+        belajarSelect.innerHTML = await loadKelompokOptions('Belajar', selectedBelajar);
+        
+        const selectedKelasDiniyah = editData?.kepesantrenan?.kelasDiniyah || '';
+        const kelasDiniyahSelect = document.getElementById('kelasDiniyah');
+        kelasDiniyahSelect.innerHTML = await loadKelasOptions('kelasDiniyah', selectedKelasDiniyah);
+        
+        const selectedKelasFormal = editData?.kepesantrenan?.kelasFormal || '';
+        const kelasFormalSelect = document.getElementById('kelasFormal');
+        kelasFormalSelect.innerHTML = await loadKelasOptions('kelasFormal', selectedKelasFormal);
+    })();
     
     // Jika mode edit, tambahkan tombol hapus (seperti kode Anda sebelumnya)
     if (currentEditId) {
@@ -82,13 +113,13 @@ function showForm(editData = null) {
         deleteBtn.textContent = 'Hapus';
         deleteBtn.className = 'btn-danger';
         deleteBtn.onclick = async () => {
-            if (confirm('Yakin hapus data santri ini?')) {
+            if (await customConfirm('Yakin hapus data santri ini?')) {
                 try {
                     await deleteDoc(doc(db, "santri", currentEditId));
-                    alert('Data berhasil dihapus');
+                    await customAlert('Data berhasil dihapus');
                     hideForm();
                 } catch (err) {
-                    alert('Gagal hapus: ' + err.message);
+                    await customAlert('Gagal hapus: ' + err.message);
                 }
             }
         };
@@ -193,15 +224,17 @@ function buildFormHtml(editData = null) {
 
                 <h4>Data Kepesantrenan</h4>
                 <div class="form-row">
-                    <div class="form-group"><label>Asrama</label><input id="asrama"></div>
-                    <div class="form-group"><label>Kelas Diniyah</label><input id="kelasDiniyah"></div>
+                    <div class="form-group"><label>NIS Pondok / NISPDF</label><input id="nisPondok"></div>
+                    <div class="form-group"><label>Kelompok Ngaji</label><select id="kelompokNgaji"></select></div>
                 </div>
                 <div class="form-row">
-                    <div class="form-group"><label>Kelas Formal</label><input id="kelasFormal"></div>
-                    <div class="form-group"><label>Kelompok Belajar</label><input id="kelompokBelajar"></div>
+                    <div class="form-group"><label>Asrama</label><select id="asrama"></select></div>
+                    <div class="form-group"><label>Kelas Diniyah</label><select id="kelasDiniyah"></select></div>
                 </div>
-                <div class="form-group"><label>Kelompok Ngaji</label><input id="kelompokNgaji"></div>
-
+                <div class="form-row">
+                    <div class="form-group"><label>Kelas Formal</label><select id="kelasFormal"></select></div>
+                    <div class="form-group"><label>Kelompok Belajar</label><select id="kelompokBelajar"></select></div>
+                </div>
                 <div class="form-buttons">
                     <button type="submit" class="btn-primary">Simpan</button>
                     <button type="button" id="btnBatalForm" class="btn-secondary">Batal</button>
@@ -252,6 +285,7 @@ function fillFormData(data) {
         document.getElementById('jalan').value = data.alamat.jalan || '';
     }
     if (data.kepesantrenan) {
+        document.getElementById('nisPondok').value = data.kepesantrenan.nisPondok || '';
         document.getElementById('asrama').value = data.kepesantrenan.asrama || '';
         document.getElementById('kelasDiniyah').value = data.kepesantrenan.kelasDiniyah || '';
         document.getElementById('kelasFormal').value = data.kepesantrenan.kelasFormal || '';
@@ -302,6 +336,7 @@ async function saveSantri() {
             jalan: document.getElementById('jalan').value
         },
         kepesantrenan: {
+            nisPondok: document.getElementById('nisPondok').value,
             asrama: document.getElementById('asrama').value,
             kelasDiniyah: document.getElementById('kelasDiniyah').value,
             kelasFormal: document.getElementById('kelasFormal').value,
@@ -309,27 +344,27 @@ async function saveSantri() {
             kelompokNgaji: document.getElementById('kelompokNgaji').value
         }
     };
-    if (!data.nama) return alert("Nama santri wajib diisi");
+    if (!data.nama) return await customAlert("Nama santri wajib diisi");
 
     try {
         if (currentEditId) {
             await updateDoc(doc(db, "santri", currentEditId), data);
-            alert("Data santri berhasil diupdate");
+            await customAlert("Data santri berhasil diupdate");
         } else {
             await addDoc(collection(db, "santri"), data);
-            alert("Santri berhasil ditambahkan");
+            await customAlert("Santri berhasil ditambahkan");
         }
         hideForm();
     } catch (err) {
-        alert("Error: " + err.message);
+        await customAlert("Error: " + err.message);
     }
 }
 
 function listenSantri() {
     if (unsubscribe) unsubscribe();
     unsubscribe = onSnapshot(collection(db, "santri"), (snapshot) => {
-        const santriList = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-        renderSantriTable(santriList);
+        allSantriData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        renderSantriTable(allSantriData);
     });
 }
 
@@ -345,10 +380,11 @@ function renderSantriTable(data) {
     const isMobile = window.innerWidth <= 768;
     let html = '<div class="table-container"><table class="santri-table">';
     if (isMobile) {
-        html += `<thead><tr><th>Nama</th><th>Aksi</th></tr></thead><tbody>`;
+        html += `<thead><tr><th>Nama</th><th>Kelas</th><th>Aksi</th></tr></thead><tbody>`;
         data.forEach(s => {
             html += `<tr>
-                        <td>${escapeHtml(s.nama)}</td>
+                        <td><span class="santri-name-link" data-id="${s.id}" style="cursor:pointer; color:var(--primary); font-weight:500;">${escapeHtml(s.nama)}</span></td>
+                        <td>${escapeHtml(s.kepesantrenan?.kelasDiniyah || '-')}</td>
                         <td class="action-cell">
                             <button class="edit-santri-btn" data-id="${s.id}">Edit</button>
                         </td>
@@ -365,7 +401,7 @@ function renderSantriTable(data) {
                  </tr></thead><tbody>`;
         data.forEach(s => {
             html += `<tr>
-                        <td>${escapeHtml(s.nama)}</td>
+                        <td><span class="santri-name-link" data-id="${s.id}" style="cursor:pointer; color:var(--primary); font-weight:500;">${escapeHtml(s.nama)}</span></td>
                         <td>${escapeHtml(s.nisn)}</td>
                         <td>${escapeHtml(s.kepesantrenan?.kelasDiniyah || '-')}</td>
                         <td>${escapeHtml(s.kepesantrenan?.kelasFormal || '-')}</td>
@@ -379,6 +415,14 @@ function renderSantriTable(data) {
     html += `</tbody></table></div>`;
     container.innerHTML = html;
     container.style.display = 'block';
+
+    document.querySelectorAll('.santri-name-link').forEach(link => {
+        link.addEventListener('click', async (e) => {
+            e.stopPropagation();
+            const id = link.dataset.id;
+            await showSantriDetailPage(id);
+        });
+    });
 
     // Event listener untuk dropdown
     document.querySelectorAll('.edit-santri-btn').forEach(btn => {
@@ -396,7 +440,7 @@ async function exportToCSV() {
     const snapshot = await getDocs(collection(db, "santri"));
     const santriList = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
     if (santriList.length === 0) {
-        alert("Tidak ada data santri untuk diekspor.");
+        await customAlert("Tidak ada data santri untuk diekspor.");
         return;
     }
     const columns = [
@@ -406,7 +450,7 @@ async function exportToCSV() {
         "ayah.nama", "ayah.status", "ayah.nik", "ayah.tempatLahir", "ayah.tanggalLahir", "ayah.pekerjaan", "ayah.wa",
         "ibu.nama", "ibu.status", "ibu.nik", "ibu.tempatLahir", "ibu.tanggalLahir", "ibu.pekerjaan", "ibu.wa",
         "alamat.provinsi", "alamat.kabupaten", "alamat.kecamatan", "alamat.desa", "alamat.jalan",
-        "kepesantrenan.asrama", "kepesantrenan.kelasDiniyah", "kepesantrenan.kelasFormal", "kepesantrenan.kelompokBelajar", "kepesantrenan.kelompokNgaji"
+        "kepesantrenan.nisPondok", "kepesantrenan.asrama", "kepesantrenan.kelasDiniyah", "kepesantrenan.kelasFormal", "kepesantrenan.kelompokBelajar", "kepesantrenan.kelompokNgaji"
     ];
     const rows = [columns];
     for (const s of santriList) {
@@ -445,16 +489,16 @@ async function importFromCSV(file) {
         const content = e.target.result;
         const rows = parseCSV(content);
         if (rows.length < 2) {
-            alert("File CSV tidak memiliki data (minimal header + 1 baris data).");
+            await customAlert("File CSV tidak memiliki data (minimal header + 1 baris data).");
             return;
         }
         const headers = rows[0];
         const dataRows = rows.slice(1).filter(row => row.length === headers.length && row.some(cell => cell.trim() !== ""));
         if (dataRows.length === 0) {
-            alert("Tidak ada data valid untuk diimpor.");
+            await customAlert("Tidak ada data valid untuk diimpor.");
             return;
         }
-        if (!confirm(`Akan mengimpor ${dataRows.length} data santri. Lanjutkan?`)) return;
+        const ok = await window.customConfirm(`Akan mengimpor ${dataRows.length} data santri. Lanjutkan?`);
         let successCount = 0;
         let errorCount = 0;
         const errors = [];
@@ -500,7 +544,7 @@ async function importFromCSV(file) {
             }
             if (chunk.length > 0) await batch.commit();
         }
-        alert(`Impor selesai. Sukses: ${successCount}, Gagal: ${errorCount}${errors.length ? "\nDetail error:\n" + errors.slice(0,5).join("\n") + (errors.length>5 ? `\n... dan ${errors.length-5} lainnya` : "") : ""}`);
+        await customAlert(`Impor selesai. Sukses: ${successCount}, Gagal: ${errorCount}${errors.length ? "\nDetail error:\n" + errors.slice(0,5).join("\n") + (errors.length>5 ? `\n... dan ${errors.length-5} lainnya` : "") : ""}`);
     };
     reader.onerror = () => alert("Gagal membaca file.");
     reader.readAsText(file, "UTF-8");
@@ -539,6 +583,169 @@ function parseCSV(text) {
         rows.push(currentRow);
     }
     return rows.map(row => row.map(field => field.trim()));
+}
+
+function filterSantriTable(keyword) {
+    if (!keyword.trim()) {
+        renderSantriTable(allSantriData);
+        return;
+    }
+    const filtered = allSantriData.filter(s => 
+        s.nama && s.nama.toLowerCase().includes(keyword.toLowerCase())
+    );
+    renderSantriTable(filtered);
+}
+
+async function showSantriDetailPage(santriId) {
+    const docSnap = await getDoc(doc(db, "santri", santriId));
+    if (!docSnap.exists()) {
+        await customAlert("Data santri tidak ditemukan");
+        return;
+    }
+    const s = docSnap.data();
+    const container = document.getElementById('main-content');
+    
+    const detailHtml = `
+        <div id="santri-detail-container">
+            <button id="backToSantriList" class="btn-secondary" style="margin-bottom:1.5rem">
+                <i class="fas fa-arrow-left"></i> Kembali ke Daftar Santri
+            </button>
+            <div class="santri-detail-card">
+                <div class="santri-detail-header">
+                    <div class="santri-avatar">
+                        <i class="fas fa-user-graduate"></i>
+                    </div>
+                    <div class="santri-info">
+                        <h2>${escapeHtml(s.nama)}</h2>
+                        <div class="santri-badges">
+                            <span><i class="fas fa-id-card"></i> NISN: ${escapeHtml(s.nisn || '-')}</span>
+                            <span><i class="fas fa-building"></i> Asrama: ${escapeHtml(s.kepesantrenan?.asrama || '-')}</span>
+                            <span><i class="fas fa-book"></i> Kelas: ${escapeHtml(s.kepesantrenan?.kelasDiniyah || '-')}</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="santri-detail-body">
+                    <div class="detail-section">
+                        <h3><i class="fas fa-user"></i> Data Pribadi</h3>
+                        <div class="detail-grid">
+                            <div><strong>NIK:</strong> ${escapeHtml(s.nik || '-')}</div>
+                            <div><strong>Tempat Lahir:</strong> ${escapeHtml(s.tempatLahir || '-')}</div>
+                            <div><strong>Tanggal Lahir:</strong> ${escapeHtml(s.tanggalLahir || '-')}</div>
+                            <div><strong>Jenis Kelamin:</strong> ${escapeHtml(s.jenisKelamin || '-')}</div>
+                            <div><strong>Jumlah Saudara:</strong> ${s.jumlahSaudara || 0}</div>
+                            <div><strong>Anak Ke-:</strong> ${s.anakKe || 0}</div>
+                            <div><strong>Cita-cita:</strong> ${escapeHtml(s.citacita || '-')}</div>
+                            <div><strong>Hobi:</strong> ${escapeHtml(s.hobi || '-')}</div>
+                            <div><strong>Pendidikan Formal:</strong> ${escapeHtml(s.pendidikanFormal || '-')}</div>
+                            <div><strong>Wali Santri:</strong> ${escapeHtml(s.waliSantri || '-')}</div>
+                            <div><strong>Nomor KK:</strong> ${escapeHtml(s.nomorKK || '-')}</div>
+                            <div><strong>Kepala Keluarga:</strong> ${escapeHtml(s.namaKepalaKeluarga || '-')}</div>
+                        </div>
+                    </div>
+                    <div class="detail-section">
+                        <h3><i class="fas fa-male"></i> Ayah Kandung</h3>
+                        <div class="detail-grid">
+                            <div><strong>Nama:</strong> ${escapeHtml(s.ayah?.nama || '-')}</div>
+                            <div><strong>Status:</strong> ${escapeHtml(s.ayah?.status || '-')}</div>
+                            <div><strong>NIK:</strong> ${escapeHtml(s.ayah?.nik || '-')}</div>
+                            <div><strong>Tempat Lahir:</strong> ${escapeHtml(s.ayah?.tempatLahir || '-')}</div>
+                            <div><strong>Tanggal Lahir:</strong> ${escapeHtml(s.ayah?.tanggalLahir || '-')}</div>
+                            <div><strong>Pekerjaan:</strong> ${escapeHtml(s.ayah?.pekerjaan || '-')}</div>
+                            <div><strong>No WA:</strong> ${escapeHtml(s.ayah?.wa || '-')}</div>
+                        </div>
+                    </div>
+                    <div class="detail-section">
+                        <h3><i class="fas fa-female"></i> Ibu Kandung</h3>
+                        <div class="detail-grid">
+                            <div><strong>Nama:</strong> ${escapeHtml(s.ibu?.nama || '-')}</div>
+                            <div><strong>Status:</strong> ${escapeHtml(s.ibu?.status || '-')}</div>
+                            <div><strong>NIK:</strong> ${escapeHtml(s.ibu?.nik || '-')}</div>
+                            <div><strong>Tempat Lahir:</strong> ${escapeHtml(s.ibu?.tempatLahir || '-')}</div>
+                            <div><strong>Tanggal Lahir:</strong> ${escapeHtml(s.ibu?.tanggalLahir || '-')}</div>
+                            <div><strong>Pekerjaan:</strong> ${escapeHtml(s.ibu?.pekerjaan || '-')}</div>
+                            <div><strong>No WA:</strong> ${escapeHtml(s.ibu?.wa || '-')}</div>
+                        </div>
+                    </div>
+                    <div class="detail-section">
+                        <h3><i class="fas fa-map-marker-alt"></i> Alamat</h3>
+                        <div class="detail-grid">
+                            <div><strong>Provinsi:</strong> ${escapeHtml(s.alamat?.provinsi || '-')}</div>
+                            <div><strong>Kabupaten:</strong> ${escapeHtml(s.alamat?.kabupaten || '-')}</div>
+                            <div><strong>Kecamatan:</strong> ${escapeHtml(s.alamat?.kecamatan || '-')}</div>
+                            <div><strong>Desa:</strong> ${escapeHtml(s.alamat?.desa || '-')}</div>
+                            <div><strong>Jalan:</strong> ${escapeHtml(s.alamat?.jalan || '-')}</div>
+                        </div>
+                    </div>
+                    <div class="detail-section">
+                        <h3><i class="fas fa-mosque"></i> Data Kepesantrenan</h3>
+                        <div class="detail-grid">
+                            <div><strong>Asrama:</strong> ${escapeHtml(s.kepesantrenan?.asrama || '-')}</div>
+                            <div><strong>Kelas Diniyah:</strong> ${escapeHtml(s.kepesantrenan?.kelasDiniyah || '-')}</div>
+                            <div><strong>Kelas Formal:</strong> ${escapeHtml(s.kepesantrenan?.kelasFormal || '-')}</div>
+                            <div><strong>Kelompok Belajar:</strong> ${escapeHtml(s.kepesantrenan?.kelompokBelajar || '-')}</div>
+                            <div><strong>Kelompok Ngaji:</strong> ${escapeHtml(s.kepesantrenan?.kelompokNgaji || '-')}</div>
+                            <div><strong>NIS Pondok:</strong> ${escapeHtml(s.kepesantrenan?.nisPondok || '-')}</div>
+                        </div>
+                    </div>
+                </div>
+                <div class="santri-detail-footer">
+                    <button id="editSantriFromDetail" class="btn-primary"><i class="fas fa-edit"></i> Edit Santri</button>
+                </div>
+            </div>
+        </div>
+    `;
+    
+    container.innerHTML = detailHtml;
+    
+    // Event listener tombol kembali
+    document.getElementById('backToSantriList').onclick = () => loadSantri(container);
+    
+    // Event listener tombol edit
+    document.getElementById('editSantriFromDetail').onclick = () => {
+        // Load ulang daftar santri, lalu buka form edit dengan data santri
+        loadSantri(container);
+        setTimeout(() => {
+            showForm({ id: santriId, ...s });
+        }, 100);
+    };
+}
+
+// ========== DROPDOWN DATA ==========
+async function loadAsramaOptions(selected = '') {
+    const snapshot = await getDocs(collection(db, "asrama"));
+    let html = '<option value="">-- Pilih Asrama --</option>';
+    snapshot.forEach(doc => {
+        const nama = doc.data().nama;
+        html += `<option value="${escapeHtml(nama)}" ${selected === nama ? 'selected' : ''}>${escapeHtml(nama)}</option>`;
+    });
+    return html;
+}
+
+async function loadKelompokOptions(jenis, selected = '') {
+    const q = query(collection(db, "kelompok"), where("jenis", "==", jenis));
+    const snapshot = await getDocs(q);
+    let html = `<option value="">-- Pilih ${jenis} --</option>`;
+    snapshot.forEach(doc => {
+        const nama = doc.data().nama;
+        html += `<option value="${escapeHtml(nama)}" ${selected === nama ? 'selected' : ''}>${escapeHtml(nama)}</option>`;
+    });
+    // Jika tidak ada, bisa tambahkan opsi untuk input manual? Biarkan kosong.
+    return html;
+}
+
+async function loadKelasOptions(field, selected = '') {
+    // Ambil semua santri, kumpulkan nilai unik dari field kepesantrenan[field]
+    const snapshot = await getDocs(collection(db, "santri"));
+    const values = new Set();
+    snapshot.forEach(doc => {
+        const val = doc.data().kepesantrenan?.[field];
+        if (val && val.trim()) values.add(val);
+    });
+    let html = `<option value="">-- Pilih ${field} --</option>`;
+    Array.from(values).sort().forEach(val => {
+        html += `<option value="${escapeHtml(val)}" ${selected === val ? 'selected' : ''}>${escapeHtml(val)}</option>`;
+    });
+    return html;
 }
 
 function escapeHtml(str) {
