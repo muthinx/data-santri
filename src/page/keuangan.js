@@ -71,24 +71,30 @@ async function getLastSaldo() {
 }
 
 async function saveTransaksiForm() {
-    const santriId = document.getElementById('namaSantriSelect').value;
-    if (!santriId) return alert("Pilih nama santri");
+    const namaSantri = document.getElementById('namaSantriInput').value.trim();
+    if (!namaSantri) return await window.customAlert("Pilih nama santri");
     
-    const santriDoc = await getDoc(doc(db, "santri", santriId));
-    if (!santriDoc.exists()) return alert("Santri tidak ditemukan");
-    const namaSantri = santriDoc.data().nama;
+    // Cari santriId berdasarkan nama
+    const santriQuery = query(collection(db, "santri"), where("nama", "==", namaSantri));
+    const santriSnap = await getDocs(santriQuery);
+    if (santriSnap.empty) {
+        await window.customAlert(`Santri dengan nama "${namaSantri}" tidak ditemukan. Pilih dari daftar.`);
+        return;
+    }
+    const santriId = santriSnap.docs[0].id;
+    const namaSantriDoc = santriSnap.docs[0].data().nama;
     
     const jenis = document.getElementById('jenisTransaksi').value;
     const jumlah = parseInt(document.getElementById('jumlahTransaksi').value);
-    if (isNaN(jumlah) || jumlah <= 0) return alert("Jumlah harus positif");
+    if (isNaN(jumlah) || jumlah <= 0) return await window.customAlert("Jumlah harus positif");
     const tanggal = document.getElementById('tglTransaksi').value;
-    if (!tanggal) return alert("Pilih tanggal");
+    if (!tanggal) return await window.customAlert("Pilih tanggal");
     const keterangan = document.getElementById('keteranganTransaksi').value;
     const admin = window.currentAdminName || auth.currentUser?.email || "Admin";
     
     if (currentTransaksiId) {
         // Edit: update data (tidak mengubah nomor transaksi dan saldo? Lebih baik tidak izinkan edit atau rekalkulasi)
-        alert("Edit transaksi tidak diizinkan untuk menjaga konsistensi saldo. Hapus dan buat baru.");
+        await window.customAlert("Edit transaksi tidak diizinkan untuk menjaga konsistensi saldo. Hapus dan buat baru.");
         return;
     } else {
         const nomorTransaksi = await generateNomorTransaksi();
@@ -100,10 +106,10 @@ async function saveTransaksiForm() {
         };
         try {
             await addDoc(collection(db, "keuangan"), data);
-            alert("Transaksi berhasil disimpan");
+            await window.customAlert("Transaksi berhasil disimpan");
             hideFormTransaksi();
         } catch (err) {
-            alert("Gagal simpan: " + err.message);
+            await window.customAlert("Gagal simpan: " + err.message);
         }
     }
 }
@@ -134,13 +140,13 @@ function closeTransaksiModal() {
 }
 
 async function deleteTransaksi(id) {
-    if (confirm("Hapus transaksi ini? Saldo akan dihitung ulang secara otomatis.")) {
+    if (await window.customConfirm("Hapus transaksi ini? Saldo akan dihitung ulang secara otomatis.")) {
         try {
             await deleteDoc(doc(db, "keuangan", id));
             await recalculateAllSaldo();
-            alert("Transaksi dihapus dan saldo telah diperbarui.");
+            await window.customAlert("Transaksi dihapus dan saldo telah diperbarui.");
         } catch (err) {
-            alert("Gagal hapus: " + err.message);
+            await window.customAlert("Gagal hapus: " + err.message);
         }
     }
 }
@@ -272,7 +278,7 @@ function listenKeuangan() {
     });
 }
 
-function showFormTransaksi(editData = null) {
+async function showFormTransaksi(editData = null) {
     const formContainer = document.getElementById('transaksi-form-container');
     const tableContainer = document.getElementById('keuanganTable');
     const headerActions = document.getElementById('keuangan-header-actions');
@@ -303,6 +309,12 @@ function showFormTransaksi(editData = null) {
     tableContainer.style.display = 'none';
     formContainer.innerHTML = buildFormTransaksiHtml(editData);
 
+    await loadSantriDatalist();
+    const namaInput = document.getElementById('namaSantriInput');
+    if (editData && editData.namaSantri) {
+        namaInput.value = editData.namaSantri;
+    }
+
     loadSantriDropdown().then(() => {
         if (editData && editData.santriId) {
             document.getElementById('namaSantriSelect').value = editData.santriId;
@@ -320,14 +332,14 @@ function showFormTransaksi(editData = null) {
         deleteBtn.textContent = 'Hapus';
         deleteBtn.className = 'btn-danger';
         deleteBtn.onclick = async () => {
-            if (confirm('Yakin hapus transaksi ini? Saldo akan dihitung ulang.')) {
+            if (await window.customConfirm('Yakin hapus transaksi ini? Saldo akan dihitung ulang.')) {
                 try {
                     await deleteDoc(doc(db, "keuangan", currentTransaksiId));
                     await recalculateAllSaldo();
-                    alert('Transaksi dihapus');
+                    await window.customAlert('Transaksi dihapus');
                     hideFormTransaksi();
                 } catch (err) {
-                    alert('Gagal hapus: ' + err.message);
+                    await window.customAlert('Gagal hapus: ' + err.message);
                 }
             }
         };
@@ -361,7 +373,9 @@ function buildFormTransaksiHtml(editData = null) {
             <form id="transaksiForm">
                 <div class="form-group">
                     <label>Nama Santri</label>
-                    <select id="namaSantriSelect" required></select>
+                    <input type="text" id="namaSantriInput" list="santriDatalist" required 
+                        placeholder="Ketik nama santri..." autocomplete="off" class="search-input">
+                    <datalist id="santriDatalist"></datalist>
                 </div>
                 <div class="form-row">
                     <div class="form-group">
@@ -411,7 +425,7 @@ function fillTransaksiFormData(data) {
 async function showSantriKeuangan(santriId) {
     const santriDoc = await getDoc(doc(db, "santri", santriId));
     if (!santriDoc.exists()) {
-        alert("Santri tidak ditemukan");
+        await window.customAlert("Santri tidak ditemukan");
         return;
     }
     const santri = santriDoc.data();
@@ -493,6 +507,21 @@ async function showSantriKeuangan(santriId) {
     document.getElementById('backToKeuangan').onclick = async () => {
         await loadKeuangan(mainContent);
     };
+}
+
+async function loadSantriDatalist() {
+    const snapshot = await getDocs(collection(db, "santri"));
+    const datalist = document.getElementById('santriDatalist');
+    if (!datalist) return;
+    datalist.innerHTML = '';
+    snapshot.forEach(doc => {
+        const santri = doc.data();
+        const option = document.createElement('option');
+        option.value = santri.nama;
+        option.setAttribute('data-id', doc.id);
+        option.textContent = `${santri.nama} (NISN: ${santri.nisn || '-'})`;
+        datalist.appendChild(option);
+    });
 }
 
 function escapeHtml(str) {
