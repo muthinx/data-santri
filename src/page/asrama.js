@@ -73,12 +73,12 @@ function showAsramaForm(editData = null) {
         deleteBtn.textContent = 'Hapus';
         deleteBtn.className = 'btn-danger';
         deleteBtn.onclick = async () => {
-            if (confirm('Hapus asrama ini? Data santri yang terkait tidak akan terhapus.')) {
+            if (await window.customConfirm('Hapus asrama ini? Data santri yang terkait tidak akan terhapus.')) {
                 try {
                     await deleteDoc(doc(db, "asrama", currentAsramaId));
-                    alert('Asrama dihapus');
+                    await window.customAlert('Asrama dihapus');
                     hideAsramaForm();
-                } catch (err) { alert(err.message); }
+                } catch (err) { await window.customAlert(err.message); }
             }
         };
         formButtons.appendChild(deleteBtn);
@@ -138,13 +138,13 @@ async function saveAsrama() {
     try {
         if (currentAsramaId) {
             await updateDoc(doc(db, "asrama", currentAsramaId), data);
-            alert("Asrama diupdate");
+            await window.customAlert("Asrama diupdate");
         } else {
             await addDoc(collection(db, "asrama"), data);
-            alert("Asrama ditambahkan");
+            await window.customAlert("Asrama ditambahkan");
         }
         hideAsramaForm();
-    } catch (err) { alert(err.message); }
+    } catch (err) { await window.customAlert(err.message); }
 }
 
 async function showAnggota(asramaNama) {
@@ -210,7 +210,7 @@ function renderAsramaList(asramas) {
     document.querySelectorAll('.hapusAsrama').forEach(btn => {
         btn.addEventListener('click', async () => {
             const id = btn.dataset.id;
-            if (confirm("Hapus asrama ini?")) {
+            if (await window.customConfirm("Hapus asrama ini?")) {
                 await deleteDoc(doc(db, "asrama", id));
             }
         });
