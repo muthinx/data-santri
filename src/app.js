@@ -1,6 +1,6 @@
 import './utils/dialog.js';
 import { auth, db } from './firebase.js';
-import { signInWithEmailAndPassword, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
+import { signInWithEmailAndPassword, signOut, onAuthStateChanged, createUserWithEmailAndPassword, updateProfile } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
 import { doc, getDoc, setDoc } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
 
 // Import halaman
@@ -21,6 +21,19 @@ const pages = {
     obrolan: loadObrolan,
     about: loadAbout
 };
+
+// Daftarkan Service Worker untuk PWA
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('sw.js')
+      .then(registration => {
+        console.log('Service Worker berhasil didaftarkan dengan scope:', registration.scope);
+      })
+      .catch(error => {
+        console.log('Pendaftaran Service Worker gagal:', error);
+      });
+  });
+}
 
 // ========== DARK MODE ==========
 function initDarkMode() {
