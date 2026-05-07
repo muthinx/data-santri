@@ -232,6 +232,14 @@ body {
     color: #b02a37;
 }
 
+#login-container {
+    display: none;
+}
+
+#loading-screen {
+    transition: opacity 0.2s ease;
+}
+
 /* Main Content */
 .main-content {
     margin-left: 280px;
@@ -2042,4 +2050,43 @@ body.dark-mode .custom-dialog-body {
 }
 body.dark-mode .custom-dialog-footer {
     border-top-color: var(--border-color);
+}
+
+/* Loading Spinner */
+.spinner {
+    width: 50px;
+    height: 50px;
+    border: 5px solid rgba(255,255,255,0.3);
+    border-radius: 50%;
+    border-top-color: var(--primary);
+    animation: spin 1s ease-in-out infinite;
+}
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
+
+/* Kelompok Section */
+.kelompok-section {
+    margin-bottom: 2rem;
+}
+.kelompok-section-title {
+    font-size: 1.25rem;
+    font-weight: 600;
+    margin-bottom: 1rem;
+    padding-bottom: 0.5rem;
+    border-bottom: 2px solid var(--primary);
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    color: var(--gray-800);
+}
+.kelompok-grid-inner {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+    gap: 1rem;
+}
+/* Dark mode */
+body.dark-mode .kelompok-section-title {
+    color: var(--text-primary);
+    border-bottom-color: var(--primary-light);
 }
