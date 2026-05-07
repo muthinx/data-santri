@@ -90,10 +90,20 @@ function initMobileSidebar() {
 }
 
 // ========== AUTH ==========
-function showApp() {
-    document.getElementById('login-container').style.display = 'none';
-    document.getElementById('app-container').style.display = 'flex';
-    loadPage('dashboard');
+// ========== SHOW APP (setelah login) ==========
+async function showApp() {
+    try {
+        document.getElementById('login-container').style.display = 'none';
+        document.getElementById('app-container').style.display = 'flex';
+        showLoading();
+        await loadPage('dashboard'); // tunggu hingga dashboard selesai dirender (termasuk data awal)
+    } catch (err) {
+        console.error('Error loading app:', err);
+        const container = document.getElementById('main-content');
+        if (container) container.innerHTML = '<p>Gagal memuat aplikasi. Silakan refresh halaman.</p>';
+    } finally {
+        hideLoading();
+    }
     attachNavEvents();
 }
 
@@ -104,12 +114,30 @@ function showLogin() {
 
 function attachNavEvents() {
     document.querySelectorAll('.sidebar nav a').forEach(link => {
-        link.addEventListener('click', (e) => {
+        link.addEventListener('click', async (e) => {
             e.preventDefault();
             const page = link.dataset.page;
-            if (page) loadPage(page);
+            if (!page) return;
+            
+            // Tampilkan loading saat navigasi (opsional)
+            showLoading();
+            try {
+                await loadPage(page);
+            } catch (err) {
+                console.error(err);
+            } finally {
+                hideLoading();
+            }
+            
             document.querySelectorAll('.sidebar nav a').forEach(a => a.classList.remove('active'));
             link.classList.add('active');
+            
+            // Tutup sidebar di mobile jika perlu
+            if (window.innerWidth <= 768) {
+                document.getElementById('sidebar')?.classList.remove('open');
+                document.getElementById('sidebarOverlay')?.classList.remove('active');
+                document.body.style.overflow = '';
+            }
         });
     });
 }
@@ -118,17 +146,10 @@ async function loadPage(pageName) {
     const container = document.getElementById('main-content');
     const titleMap = {
         dashboard: 'Dashboard', santri: 'Data Santri', keuangan: 'Keuangan',
-        asrama: 'Manajemen Asrama', kelompokngaji: 'Kelompok Ngaji & Belajar', 
+        asrama: 'Manajemen Asrama', kelompokngaji: 'Kelompok Ngaji & Belajar',
         about: 'Tentang Aplikasi', obrolan: 'Obrolan'
     };
     document.getElementById('page-title').innerText = titleMap[pageName] || pageName;
-    
-    // Tambah/hapus class untuk halaman obrolan
-    if (pageName === 'obrolan') {
-        document.body.classList.add('page-chat');
-    } else {
-        document.body.classList.remove('page-chat');
-    }
     
     if (pages[pageName]) {
         await pages[pageName](container);
@@ -198,6 +219,21 @@ function initAuth() {
         document.getElementById('signup-card').style.display = 'none';
         document.querySelector('.login-card').style.display = 'block';
     };
+}
+
+// ========== LOADING SCREEN ==========
+function showLoading() {
+    const loadingDiv = document.getElementById('loading-screen');
+    if (loadingDiv) {
+        loadingDiv.style.display = 'flex';
+    }
+}
+
+function hideLoading() {
+    const loadingDiv = document.getElementById('loading-screen');
+    if (loadingDiv) {
+        loadingDiv.style.display = 'none';
+    }
 }
 
 // ========== INIT ==========
