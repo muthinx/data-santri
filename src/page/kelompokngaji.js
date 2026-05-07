@@ -1,5 +1,5 @@
 import { db } from '../firebase.js';
-import { collection, addDoc, updateDoc, deleteDoc, doc, onSnapshot, getDocs, getDoc } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+import { collection, addDoc, updateDoc, deleteDoc, doc, onSnapshot, getDocs, getDoc, query, orderBy } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
 
 let unsubscribeKelompok = null;
 
@@ -90,6 +90,8 @@ function showKelompokForm(editData = null) {
         document.getElementById('kelompokNama').value = editData.nama || '';
         document.getElementById('kelompokJenis').value = editData.jenis || 'Ngaji';
         document.getElementById('kelompokPembina').value = editData.pembina || '';
+        const urutanInput = document.getElementById('kelompokUrutan');
+        if (urutanInput) urutanInput.value = editData.urutan || 0;
     }
 }
 
@@ -110,6 +112,11 @@ function buildKelompokFormHtml(editData = null) {
             <h3>${title}</h3>
             <form id="kelompokForm">
                 <div class="form-group">
+                    <label>Urutan Tampil</label>
+                    <input type="number" id="kelompokUrutan" value="0">
+                </div>
+
+                <div class="form-group">
                     <label>Nama Kelompok *</label>
                     <input id="kelompokNama" required>
                 </div>
@@ -118,6 +125,7 @@ function buildKelompokFormHtml(editData = null) {
                     <select id="kelompokJenis">
                         <option value="Ngaji">Ngaji</option>
                         <option value="Belajar">Belajar</option>
+                        <option value="Diniyah">Diniyah</option>
                         <option value="Formal">Formal</option>
                     </select>
                 </div>
@@ -140,7 +148,8 @@ async function saveKelompok() {
     const data = {
         nama,
         jenis: document.getElementById('kelompokJenis').value,
-        pembina: document.getElementById('kelompokPembina').value
+        pembina: document.getElementById('kelompokPembina').value,
+        urutan: parseInt(document.getElementById('kelompokUrutan').value) || 0,
     };
     try {
         if (currentKelompokId) {
@@ -159,6 +168,7 @@ async function showAnggotaKelompok(kelompokNama, kelompokJenis) {
     let field = '';
     if (kelompokJenis === 'Ngaji') field = 'kelompokNgaji';
     else if (kelompokJenis === 'Belajar') field = 'kelompokBelajar';
+    else if (kelompokJenis === 'Diniyah') field = 'kelasDiniyah';
     else field = 'kelasFormal';
     
     const anggota = [];
@@ -177,35 +187,64 @@ async function showAnggotaKelompok(kelompokNama, kelompokJenis) {
 function renderKelompokList(kelompoks) {
     const container = document.getElementById('kelompokList');
     if (!container) return;
+    
     if (kelompoks.length === 0) {
         container.innerHTML = "<p class='empty-state'>Belum ada kelompok. Klik tombol Tambah Kelompok.</p>";
         container.style.display = 'grid';
         return;
     }
     
+    // Kelompokkan berdasarkan jenis
+    const grouped = {
+        'Ngaji': [],
+        'Belajar': [],
+        'Diniyah': [],
+        'Formal': []
+    };
+    kelompoks.forEach(k => {
+        if (grouped[k.jenis]) grouped[k.jenis].push(k);
+        else grouped[k.jenis] = [k];
+    });
+    
     let html = '';
-    for (let k of kelompoks) {
-        html += `
-            <div class="kelompok-card">
-                <div class="card-header">
-                    <i class="fas fa-users"></i>
-                    <h3>${escapeHtml(k.nama)}</h3>
-                </div>
-                <div class="card-body">
-                    <div class="info-row"><i class="fas fa-tag"></i> <strong>Jenis:</strong> ${escapeHtml(k.jenis)}</div>
-                    <div class="info-row"><i class="fas fa-chalkboard-user"></i> <strong>Pembina:</strong> ${escapeHtml(k.pembina) || '-'}</div>
-                    <div class="info-row"><i class="fas fa-users"></i> <strong>Jumlah Anggota:</strong> <span id="count-${k.id}">...</span></div>
-                </div>
-                <div class="card-actions">
-                    <button class="lihatAnggotaKelompok" data-nama="${escapeHtml(k.nama)}" data-jenis="${escapeHtml(k.jenis)}"><i class="fas fa-eye"></i> Anggota</button>
-                    <button class="editKelompok" data-id="${k.id}"><i class="fas fa-edit"></i> Edit</button>
-                    <button class="hapusKelompok" data-id="${k.id}"><i class="fas fa-trash"></i> Hapus</button>
-                </div>
-            </div>
-        `;
+    const jenisUrutan = ['Ngaji', 'Belajar', 'Diniyah', 'Formal'];
+    for (const jenis of jenisUrutan) {
+        const items = grouped[jenis];
+        if (items && items.length > 0) {
+            html += `
+                <div class="kelompok-section">
+                    <h3 class="kelompok-section-title">
+                        <i class="fas ${getJenisIcon(jenis)}"></i> 
+                        ${jenis}
+                    </h3>
+                    <div class="kelompok-grid-inner">
+            `;
+            for (let k of items) {
+                html += `
+                    <div class="kelompok-card">
+                        <div class="card-header">
+                            <i class="fas fa-users"></i>
+                            <h3>${escapeHtml(k.nama)}</h3>
+                        </div>
+                        <div class="card-body">
+                            <div class="info-row"><i class="fas fa-tag"></i> <strong>Jenis:</strong> ${escapeHtml(k.jenis)}</div>
+                            <div class="info-row"><i class="fas fa-chalkboard-user"></i> <strong>Pembina:</strong> ${escapeHtml(k.pembina) || '-'}</div>
+                            <div class="info-row"><i class="fas fa-users"></i> <strong>Jumlah Anggota:</strong> <span id="count-${k.id}">...</span></div>
+                        </div>
+                        <div class="card-actions">
+                            <button class="lihatAnggotaKelompok" data-nama="${escapeHtml(k.nama)}" data-jenis="${escapeHtml(k.jenis)}"><i class="fas fa-eye"></i> Anggota</button>
+                            <button class="editKelompok" data-id="${k.id}"><i class="fas fa-edit"></i> Edit</button>
+                            <button class="hapusKelompok" data-id="${k.id}"><i class="fas fa-trash"></i> Hapus</button>
+                        </div>
+                    </div>
+                `;
+            }
+            html += `</div></div>`;
+        }
     }
+    
     container.innerHTML = html;
-    container.style.display = 'grid';
+    container.style.display = 'block';
     
     // Update jumlah anggota
     updateAnggotaCounts(kelompoks);
@@ -231,6 +270,17 @@ function renderKelompokList(kelompoks) {
     });
 }
 
+// Fungsi helper untuk ikon berdasarkan jenis
+function getJenisIcon(jenis) {
+    switch(jenis) {
+        case 'Ngaji': return 'fa-book-quran';
+        case 'Belajar': return 'fa-chalkboard-user';
+        case 'Diniyah': return 'fa-mosque';
+        case 'Formal': return 'fa-school';
+        default: return 'fa-tag';
+    }
+}
+
 async function updateAnggotaCounts(kelompoks) {
     const santriSnap = await getDocs(collection(db, "santri"));
     const santriList = santriSnap.docs.map(d => d.data());
@@ -238,6 +288,7 @@ async function updateAnggotaCounts(kelompoks) {
         let count = 0;
         if (k.jenis === 'Ngaji') count = santriList.filter(s => s.kepesantrenan?.kelompokNgaji === k.nama).length;
         else if (k.jenis === 'Belajar') count = santriList.filter(s => s.kepesantrenan?.kelompokBelajar === k.nama).length;
+        else if (k.jenis === 'Diniyah') count = santriList.filter(s => s.kepesantrenan?.kelasDiniyah === k.nama).length;
         else count = santriList.filter(s => s.kepesantrenan?.kelasFormal === k.nama).length;
         const span = document.getElementById(`count-${k.id}`);
         if (span) span.innerText = count;
@@ -246,11 +297,13 @@ async function updateAnggotaCounts(kelompoks) {
 
 function listenKelompok() {
     if (unsubscribeKelompok) unsubscribeKelompok();
-    unsubscribeKelompok = onSnapshot(collection(db, "kelompok"), (snapshot) => {
+    const q = query(collection(db, "kelompok"), orderBy("urutan", "asc"));
+    unsubscribeKelompok = onSnapshot(q, (snapshot) => {
         const kelompoks = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
         renderKelompokList(kelompoks);
     });
 }
+
 
 function escapeHtml(str) {
     if (!str) return '';
