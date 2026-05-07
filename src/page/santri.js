@@ -94,11 +94,11 @@ function showForm(editData = null) {
         
         const selectedKelasDiniyah = editData?.kepesantrenan?.kelasDiniyah || '';
         const kelasDiniyahSelect = document.getElementById('kelasDiniyah');
-        kelasDiniyahSelect.innerHTML = await loadKelasOptions('Diniyah', selectedKelasDiniyah);
+        kelasDiniyahSelect.innerHTML = await loadKelompokOptions('Diniyah', selectedKelasDiniyah);
         
         const selectedKelasFormal = editData?.kepesantrenan?.kelasFormal || '';
         const kelasFormalSelect = document.getElementById('kelasFormal');
-        kelasFormalSelect.innerHTML = await loadKelasOptions('Formal', selectedKelasFormal);
+        kelasFormalSelect.innerHTML = await loadKelompokOptions('Formal', selectedKelasFormal);
     })();
     
     // Jika mode edit, tambahkan tombol hapus (seperti kode Anda sebelumnya)
@@ -113,13 +113,13 @@ function showForm(editData = null) {
         deleteBtn.textContent = 'Hapus';
         deleteBtn.className = 'btn-danger';
         deleteBtn.onclick = async () => {
-            if (await customConfirm('Yakin hapus data santri ini?')) {
+            if (await window.customConfirm('Yakin hapus data santri ini?')) {
                 try {
                     await deleteDoc(doc(db, "santri", currentEditId));
                     await customAlert('Data berhasil dihapus');
                     hideForm();
                 } catch (err) {
-                    await customAlert('Gagal hapus: ' + err.message);
+                    await window.customAlert('Gagal hapus: ' + err.message);
                 }
             }
         };
