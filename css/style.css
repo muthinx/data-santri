@@ -2090,3 +2090,23 @@ body.dark-mode .kelompok-section-title {
     color: var(--text-primary);
     border-bottom-color: var(--primary-light);
 }
+
+/* Halaman obrolan: hilangkan padding .content */
+body.page-chat .content {
+    padding: 0;
+    background: transparent;
+    box-shadow: none;
+}
+
+/* Agar chat-container memenuhi lebar dengan sedikit margin */
+body.page-chat .chat-container {
+    margin: 0;
+    border-radius: 0;
+}
+
+/* Sesuaikan untuk mobile */
+@media (max-width: 768px) {
+    body.page-chat .chat-container {
+        height: calc(max-height);
+    }
+}
