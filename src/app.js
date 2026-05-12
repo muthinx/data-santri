@@ -96,7 +96,7 @@ async function showApp() {
         document.getElementById('login-container').style.display = 'none';
         document.getElementById('app-container').style.display = 'flex';
         showLoading();
-        await loadPage('dashboard'); // tunggu hingga dashboard selesai dirender (termasuk data awal)
+        await loadPage('obrolan'); // tunggu hingga dashboard selesai dirender (termasuk data awal)
     } catch (err) {
         console.error('Error loading app:', err);
         const container = document.getElementById('main-content');
@@ -146,16 +146,30 @@ async function loadPage(pageName) {
     const container = document.getElementById('main-content');
     const titleMap = {
         dashboard: 'Dashboard', santri: 'Data Santri', keuangan: 'Keuangan',
-        asrama: 'Manajemen Asrama', kelompokngaji: 'Kelompok Ngaji & Belajar',
+        asrama: 'Manajemen Asrama', kelompokngaji: 'Kelompok Ngaji & Belajar', 
         about: 'Tentang Aplikasi', obrolan: 'Obrolan'
     };
     document.getElementById('page-title').innerText = titleMap[pageName] || pageName;
+    
+    // Tambah/hapus class untuk halaman obrolan
+    if (pageName === 'obrolan') {
+        document.body.classList.add('page-chat');
+    } else {
+        document.body.classList.remove('page-chat');
+    }
     
     if (pages[pageName]) {
         await pages[pageName](container);
     } else {
         container.innerHTML = '<p>Halaman tidak ditemukan</p>';
     }
+    setActiveNav(pageName);
+}
+
+function setActiveNav(page) {
+    document.querySelectorAll('.sidebar nav a').forEach(a => a.classList.remove('active'));
+    const activeLink = document.querySelector(`.sidebar nav a[data-page="${page}"]`);
+    if (activeLink) activeLink.classList.add('active');
 }
 
 // Inisialisasi auth
