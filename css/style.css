@@ -382,6 +382,7 @@ button.danger:hover {
 /* Tables */
 .table-container {
     overflow-x: auto;
+    height: calc(100vh - 240px);
 }
 
 table {
