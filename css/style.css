@@ -244,8 +244,8 @@ body {
 .main-content {
     margin-left: 280px;
     flex: 1;
-    padding: 1.5rem;
-    width: calc(100% - 280px);
+    padding: 1.5rem 1.5rem 0rem 1.5rem;
+    width: calc(100% - 180px);
 }
 
 /* Header baru (dengan left dan right section) */
@@ -382,7 +382,6 @@ button.danger:hover {
 /* Tables */
 .table-container {
     overflow-x: auto;
-    height: calc(100vh - 240px);
 }
 
 table {
@@ -604,9 +603,12 @@ body.dark-mode .user-info {
 
     .main-content {
         margin-left: 0;
-        width: 100%;
         padding: 1rem;
         padding-top: 1rem;
+    }
+
+    .content {
+        height: calc(100vh - 110px);
     }
 
     .header {
@@ -2109,5 +2111,24 @@ body.page-chat .chat-container {
 @media (max-width: 768px) {
     body.page-chat .chat-container {
         height: calc(max-height);
+    }
+}
+
+/* Global */
+#santri-table-container {
+    width: 100%;
+    overflow: auto;
+    max-height: calc(100vh - 200px);
+}
+
+#santri-table-container table {
+    width: max-content;
+    min-width: 100%;
+}
+
+/* Mobile only */
+@media (max-width: 768px) {
+    body.page-chat .chat-container {
+        height: calc(100vh - 120px);
     }
 }
