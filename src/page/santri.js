@@ -5,6 +5,14 @@ let currentEditId = null;
 let unsubscribe = null;
 let allSantriData = [];
 
+// State untuk filter & sortir
+let filterState = {
+    jenisKelamin: 'Semua',
+    asrama: 'Semua',
+    kelasDiniyah: 'Semua'
+};
+let sortState = 'nama';
+
 export function loadSantri(container) {
     renderSantriPage(container);
     listenSantri();
@@ -15,6 +23,7 @@ function renderSantriPage(container) {
         <div id="santri-header-actions">
             <div class="header-left-buttons">
                 <button id="btnTambahSantriBaru" class="btn-primary"><i class="fas fa-plus"></i></button>
+                <button id="btnFilterSantri" class="btn-secondary"><i class="fas fa-sliders-h"></i> Filter</button>
             </div>
             <div class="search-wrapper">
                 <i class="fas fa-search search-icon"></i>
@@ -29,19 +38,188 @@ function renderSantriPage(container) {
         <div id="santri-form-container" style="display:none;"></div>
         <div id="santri-table-container"></div>
     `;
+
+    // Event listeners
     document.getElementById('btnTambahSantriBaru').onclick = () => showForm();
+    document.getElementById('btnFilterSantri').onclick = () => openFilterModal();
     document.getElementById('btnExportCSV').onclick = () => exportToCSV();
     const searchInput = document.getElementById('searchSantri');
     if (searchInput) {
-        searchInput.addEventListener('input', (e) => filterSantriTable(e.target.value));
+        searchInput.addEventListener('input', (e) => applyFiltersAndSort());
     }
     const importBtn = document.getElementById('btnImportCSV');
     const fileInput = document.getElementById('fileImportCSV');
     importBtn.onclick = () => fileInput.click();
     fileInput.onchange = (e) => {
         if (e.target.files.length > 0) importFromCSV(e.target.files[0]);
-        fileInput.value = ''; // reset
+        fileInput.value = '';
     };
+
+    // Buat modal filter (tambahkan ke body jika belum ada)
+    if (!document.getElementById('filterModal')) {
+        const modalHTML = `
+            <div id="filterModal" class="modal" style="display:none;">
+                <div class="modal-content">
+                    <h3><i class="fas fa-sliders-h"></i> Filter & Urutkan</h3>
+                    <div class="form-group">
+                        <label for="sortSantriModal">Urutkan</label>
+                        <select id="sortSantriModal">
+                            <option value="nama">Nama (A–Z)</option>
+                            <option value="kelas">Kelas Diniyah</option>
+                            <option value="asrama">Asrama</option>
+                            <option value="usia">Usia (termuda)</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="filterJenisKelaminModal">Jenis Kelamin</label>
+                        <select id="filterJenisKelaminModal">
+                            <option value="Semua">Semua</option>
+                            <option value="Laki-laki">Laki-laki</option>
+                            <option value="Perempuan">Perempuan</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="filterAsramaModal">Asrama</label>
+                        <select id="filterAsramaModal">
+                            <option value="Semua">Semua</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="filterKelasDiniyahModal">Kelas Diniyah</label>
+                        <select id="filterKelasDiniyahModal">
+                            <option value="Semua">Semua</option>
+                        </select>
+                    </div>
+                    <div class="form-buttons" style="margin-top:1.5rem;">
+                        <button id="applyFilterBtn" class="btn-primary">Terapkan</button>
+                        <button id="resetFilterBtn" class="btn-secondary">Reset</button>
+                        <button id="closeFilterBtn" class="btn-secondary">Tutup</button>
+                    </div>
+                </div>
+            </div>
+        `;
+        document.body.insertAdjacentHTML('beforeend', modalHTML);
+
+        // Event untuk modal
+        document.getElementById('applyFilterBtn').onclick = () => {
+            // Ambil nilai dari modal
+            sortState = document.getElementById('sortSantriModal').value;
+            filterState.jenisKelamin = document.getElementById('filterJenisKelaminModal').value;
+            filterState.asrama = document.getElementById('filterAsramaModal').value;
+            filterState.kelasDiniyah = document.getElementById('filterKelasDiniyahModal').value;
+            applyFiltersAndSort();
+            closeFilterModal();
+        };
+        document.getElementById('resetFilterBtn').onclick = () => {
+            document.getElementById('sortSantriModal').value = 'nama';
+            document.getElementById('filterJenisKelaminModal').value = 'Semua';
+            document.getElementById('filterAsramaModal').value = 'Semua';
+            document.getElementById('filterKelasDiniyahModal').value = 'Semua';
+            sortState = 'nama';
+            filterState.jenisKelamin = 'Semua';
+            filterState.asrama = 'Semua';
+            filterState.kelasDiniyah = 'Semua';
+            applyFiltersAndSort();
+            closeFilterModal();
+        };
+        document.getElementById('closeFilterBtn').onclick = closeFilterModal;
+        // Tutup modal saat klik di luar konten
+        document.getElementById('filterModal').addEventListener('click', (e) => {
+            if (e.target === e.currentTarget) closeFilterModal();
+        });
+    }
+
+    // Sinkronkan nilai dropdown modal dengan state saat ini (jika modal pernah dibuka)
+    // Tidak perlu, karena saat buka kita akan set nilai dari state.
+}
+
+function openFilterModal() {
+    const modal = document.getElementById('filterModal');
+    if (!modal) return;
+    // Set nilai dropdown sesuai state saat ini
+    document.getElementById('sortSantriModal').value = sortState;
+    document.getElementById('filterJenisKelaminModal').value = filterState.jenisKelamin;
+    document.getElementById('filterAsramaModal').value = filterState.asrama;
+    document.getElementById('filterKelasDiniyahModal').value = filterState.kelasDiniyah;
+    modal.style.display = 'flex';
+}
+
+function closeFilterModal() {
+    const modal = document.getElementById('filterModal');
+    if (modal) modal.style.display = 'none';
+}
+
+// Update opsi filter dinamis (asrama & kelas) dari data yang ada
+function updateFilterOptions() {
+    const asramaSet = new Set();
+    const kelasSet = new Set();
+    allSantriData.forEach(s => {
+        if (s.kepesantrenan?.asrama) asramaSet.add(s.kepesantrenan.asrama);
+        if (s.kepesantrenan?.kelasDiniyah) kelasSet.add(s.kepesantrenan.kelasDiniyah);
+    });
+
+    // Update dropdown di modal
+    const asramaSelect = document.getElementById('filterAsramaModal');
+    const kelasSelect = document.getElementById('filterKelasDiniyahModal');
+    if (asramaSelect) {
+        const currentVal = asramaSelect.value;
+        asramaSelect.innerHTML = '<option value="Semua">Semua</option>';
+        Array.from(asramaSet).sort().forEach(val => {
+            asramaSelect.innerHTML += `<option value="${escapeHtml(val)}">${escapeHtml(val)}</option>`;
+        });
+        asramaSelect.value = currentVal;
+    }
+    if (kelasSelect) {
+        const currentVal = kelasSelect.value;
+        kelasSelect.innerHTML = '<option value="Semua">Semua</option>';
+        Array.from(kelasSet).sort().forEach(val => {
+            kelasSelect.innerHTML += `<option value="${escapeHtml(val)}">${escapeHtml(val)}</option>`;
+        });
+        kelasSelect.value = currentVal;
+    }
+}
+
+// ====== FILTER & SORTIR ======
+function applyFiltersAndSort() {
+    const keyword = document.getElementById('searchSantri')?.value?.toLowerCase() || '';
+    let filtered = allSantriData.filter(s => {
+        // Filter teks
+        if (keyword && !(s.nama && s.nama.toLowerCase().includes(keyword))) return false;
+        // Filter jenis kelamin
+        if (filterState.jenisKelamin !== 'Semua' && s.jenisKelamin !== filterState.jenisKelamin) return false;
+        // Filter asrama
+        if (filterState.asrama !== 'Semua' && (s.kepesantrenan?.asrama || '') !== filterState.asrama) return false;
+        // Filter kelas diniyah
+        if (filterState.kelasDiniyah !== 'Semua' && (s.kepesantrenan?.kelasDiniyah || '') !== filterState.kelasDiniyah) return false;
+        return true;
+    });
+
+    // Sortir
+    switch (sortState) {
+        case 'nama':
+            filtered.sort((a, b) => (a.nama || '').localeCompare(b.nama || ''));
+            break;
+        case 'kelas':
+            filtered.sort((a, b) => (a.kepesantrenan?.kelasDiniyah || '').localeCompare(b.kepesantrenan?.kelasDiniyah || ''));
+            break;
+        case 'asrama':
+            filtered.sort((a, b) => (a.kepesantrenan?.asrama || '').localeCompare(b.kepesantrenan?.asrama || ''));
+            break;
+        case 'usia': {
+            const getAge = (s) => {
+                if (!s.tanggalLahir) return Infinity;
+                const birth = new Date(s.tanggalLahir);
+                if (isNaN(birth)) return Infinity;
+                const ageMs = Date.now() - birth.getTime();
+                return ageMs / (1000 * 60 * 60 * 24 * 365.25);
+            };
+            filtered.sort((a, b) => getAge(a) - getAge(b));
+            break;
+        }
+        default: break;
+    }
+
+    renderSantriTable(filtered);
 }
 
 // Menampilkan form (tambah atau edit) - menggantikan tabel
@@ -49,11 +227,8 @@ function showForm(editData = null) {
     const formContainer = document.getElementById('santri-form-container');
     const tableContainer = document.getElementById('santri-table-container');
     const headerActions = document.getElementById('santri-header-actions');
-    
-    // Sembunyikan header actions (tombol tambah)
     if (headerActions) headerActions.style.display = 'none';
     
-    // Cek apakah tombol kembali sudah ada, jika belum buat
     let backBtn = document.getElementById('btnBackFromForm');
     if (!backBtn) {
         backBtn = document.createElement('button');
@@ -61,20 +236,17 @@ function showForm(editData = null) {
         backBtn.className = 'btn-secondary';
         backBtn.innerHTML = '<i class="fas fa-arrow-left"></i> Kembali';
         backBtn.style.marginBottom = '1rem';
-        // Sisipkan sebelum form container
         formContainer.parentNode.insertBefore(backBtn, formContainer);
     }
     backBtn.style.display = 'inline-flex';
     backBtn.onclick = () => hideForm();
     
-    // Atur currentEditId
     if (editData) {
         currentEditId = editData.id;
     } else {
         currentEditId = null;
     }
     
-    // Tampilkan form container dan isi HTML form
     formContainer.style.display = 'block';
     tableContainer.style.display = 'none';
     formContainer.innerHTML = buildFormHtml(editData);
@@ -101,10 +273,8 @@ function showForm(editData = null) {
         kelasFormalSelect.innerHTML = await loadKelompokOptions('Formal', selectedKelasFormal);
     })();
     
-    // Jika mode edit, tambahkan tombol hapus (seperti kode Anda sebelumnya)
     if (currentEditId) {
         const formButtons = document.querySelector('.form-buttons');
-        // Hapus tombol hapus lama jika ada
         const oldDelete = formButtons.querySelector('.btn-danger');
         if (oldDelete) oldDelete.remove();
         
@@ -126,11 +296,9 @@ function showForm(editData = null) {
         formButtons.appendChild(deleteBtn);
     }
     
-    // Pasang event handler
     document.getElementById('santriForm').onsubmit = (e) => { e.preventDefault(); saveSantri(); };
     document.getElementById('btnBatalForm').onclick = () => hideForm();
     
-    // Isi data jika edit
     if (editData) {
         fillFormData(editData);
     }
@@ -364,7 +532,8 @@ function listenSantri() {
     if (unsubscribe) unsubscribe();
     unsubscribe = onSnapshot(collection(db, "santri"), (snapshot) => {
         allSantriData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-        renderSantriTable(allSantriData);
+        updateFilterOptions();
+        applyFiltersAndSort();
     });
 }
 
@@ -372,13 +541,15 @@ function renderSantriTable(data) {
     const container = document.getElementById('santri-table-container');
     if (!container) return;
     if (data.length === 0) {
-        container.innerHTML = "<p>Belum ada data santri.</p>";
+        container.innerHTML = `<p>Belum ada data santri.</p>`;
         container.style.display = 'block';
         return;
     }
 
+    const total = allSantriData.length;
     const isMobile = window.innerWidth <= 768;
-    let html = '<div class="table-container"><table class="santri-table">';
+    let html = `<div class="santri-count">Menampilkan ${data.length} dari ${total} santri</div>`;
+    html += '<div class="table-container"><table class="santri-table">';
     if (isMobile) {
         html += `<thead><tr><th>Nama</th><th>Kelas</th><th>Aksi</th></tr></thead><tbody>`;
         data.forEach(s => {
@@ -416,6 +587,7 @@ function renderSantriTable(data) {
     container.innerHTML = html;
     container.style.display = 'block';
 
+    // Event listener untuk klik nama (detail)
     document.querySelectorAll('.santri-name-link').forEach(link => {
         link.addEventListener('click', async (e) => {
             e.stopPropagation();
@@ -424,7 +596,7 @@ function renderSantriTable(data) {
         });
     });
 
-    // Event listener untuk dropdown
+    // Event listener untuk tombol edit
     document.querySelectorAll('.edit-santri-btn').forEach(btn => {
         btn.addEventListener('click', async (e) => {
             e.preventDefault();
@@ -499,6 +671,7 @@ async function importFromCSV(file) {
             return;
         }
         const ok = await window.customConfirm(`Akan mengimpor ${dataRows.length} data santri. Lanjutkan?`);
+        if (!ok) return;
         let successCount = 0;
         let errorCount = 0;
         const errors = [];
@@ -583,17 +756,6 @@ function parseCSV(text) {
         rows.push(currentRow);
     }
     return rows.map(row => row.map(field => field.trim()));
-}
-
-function filterSantriTable(keyword) {
-    if (!keyword.trim()) {
-        renderSantriTable(allSantriData);
-        return;
-    }
-    const filtered = allSantriData.filter(s => 
-        s.nama && s.nama.toLowerCase().includes(keyword.toLowerCase())
-    );
-    renderSantriTable(filtered);
 }
 
 async function showSantriDetailPage(santriId) {
@@ -697,12 +859,8 @@ async function showSantriDetailPage(santriId) {
     
     container.innerHTML = detailHtml;
     
-    // Event listener tombol kembali
     document.getElementById('backToSantriList').onclick = () => loadSantri(container);
-    
-    // Event listener tombol edit
     document.getElementById('editSantriFromDetail').onclick = () => {
-        // Load ulang daftar santri, lalu buka form edit dengan data santri
         loadSantri(container);
         setTimeout(() => {
             showForm({ id: santriId, ...s });
@@ -728,22 +886,6 @@ async function loadKelompokOptions(jenis, selected = '') {
     snapshot.forEach(doc => {
         const nama = doc.data().nama;
         html += `<option value="${escapeHtml(nama)}" ${selected === nama ? 'selected' : ''}>${escapeHtml(nama)}</option>`;
-    });
-    // Jika tidak ada, bisa tambahkan opsi untuk input manual? Biarkan kosong.
-    return html;
-}
-
-async function loadKelasOptions(field, selected = '') {
-    // Ambil semua santri, kumpulkan nilai unik dari field kepesantrenan[field]
-    const snapshot = await getDocs(collection(db, "santri"));
-    const values = new Set();
-    snapshot.forEach(doc => {
-        const val = doc.data().kepesantrenan?.[field];
-        if (val && val.trim()) values.add(val);
-    });
-    let html = `<option value="">-- Pilih ${field} --</option>`;
-    Array.from(values).sort().forEach(val => {
-        html += `<option value="${escapeHtml(val)}" ${selected === val ? 'selected' : ''}>${escapeHtml(val)}</option>`;
     });
     return html;
 }
