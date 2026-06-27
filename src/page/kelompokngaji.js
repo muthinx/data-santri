@@ -2,6 +2,15 @@ import { db } from '../firebase.js';
 import { collection, addDoc, updateDoc, deleteDoc, doc, onSnapshot, getDocs, getDoc, query, orderBy } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
 
 let unsubscribeKelompok = null;
+let allKelompokData = [];
+let currentKelompokId = null;
+
+// State filter & sortir
+let filterStateKelompok = {
+    jenis: 'Semua'
+};
+let sortStateKelompok = 'urutanAsc'; // default: urutan
+let searchKeyword = '';
 
 export function loadKelompokNgaji(container) {
     renderKelompokPage(container);
@@ -10,13 +19,26 @@ export function loadKelompokNgaji(container) {
 
 function renderKelompokPage(container) {
     container.innerHTML = `
-        <div id="kelompok-header-actions" style="display: flex; justify-content: flex-end; margin-bottom: 1rem;">
-            <button id="tambahKelompokBtn" class="btn-primary"><i class="fas fa-plus"></i> Tambah Kelompok</button>
+        <div id="kelompok-page-container">
+            <div id="kelompok-header-actions">
+                <div class="header-left-buttons">
+                    <button id="tambahKelompokBtn" class="btn-primary"><i class="fas fa-plus"></i></button>
+                    <button id="btnFilterKelompok" class="btn-secondary"><i class="fas fa-sliders-h"></i> Filter</button>
+                </div>
+                <div class="search-wrapper">
+                    <i class="fas fa-search search-icon"></i>
+                    <input type="text" id="searchKelompok" placeholder="Cari kelompok / pembina..." class="search-input">
+                </div>
+                <div class="header-right-buttons desktop-only">
+                    <button id="btnExportKelompokCSV" class="btn-secondary"><i class="fas fa-download"></i> Ekspor CSV</button>
+                </div>
+            </div>
+            <div id="kelompok-scroll-area">
+                <div id="kelompokList" class="kelompok-grid"></div>
+            </div>
         </div>
         <div id="kelompok-form-container" style="display:none;"></div>
-        <div id="kelompokList" class="kelompok-grid"></div>
-
-        <!-- Modal untuk lihat anggota -->
+        <!-- Modal detail anggota -->
         <div id="detailKelompokModal" class="modal">
             <div class="modal-content">
                 <h3>Daftar Anggota Kelompok</h3>
@@ -26,23 +48,137 @@ function renderKelompokPage(container) {
         </div>
     `;
 
+    // Event listeners
     document.getElementById('tambahKelompokBtn').onclick = () => showKelompokForm();
+    document.getElementById('btnFilterKelompok').onclick = () => openFilterModalKelompok();
+    document.getElementById('btnExportKelompokCSV').onclick = () => exportKelompokToCSV();
     document.getElementById('tutupDetailKelompokModal').onclick = () => document.getElementById('detailKelompokModal').style.display = 'none';
+
+    const searchInput = document.getElementById('searchKelompok');
+    if (searchInput) {
+        searchInput.addEventListener('input', (e) => {
+            searchKeyword = e.target.value.toLowerCase();
+            applyFiltersAndSort();
+        });
+    }
+
+    // Buat modal filter kelompok
+    if (!document.getElementById('filterModalKelompok')) {
+        const modalHTML = `
+            <div id="filterModalKelompok" class="modal" style="display:none;">
+                <div class="modal-content">
+                    <h3><i class="fas fa-sliders-h"></i> Filter & Urutkan Kelompok</h3>
+                    <div class="form-group">
+                        <label for="sortKelompokModal">Urutkan</label>
+                        <select id="sortKelompokModal">
+                            <option value="urutanAsc">Urutan (default)</option>
+                            <option value="namaAsc">Nama (A–Z)</option>
+                            <option value="namaDesc">Nama (Z–A)</option>
+                            <option value="anggotaDesc">Jumlah Anggota (terbanyak)</option>
+                            <option value="anggotaAsc">Jumlah Anggota (tersedikit)</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="filterJenisKelompokModal">Jenis Kelompok</label>
+                        <select id="filterJenisKelompokModal">
+                            <option value="Semua">Semua</option>
+                            <option value="Ngaji">Ngaji</option>
+                            <option value="Belajar">Belajar</option>
+                            <option value="Diniyah">Diniyah</option>
+                            <option value="Formal">Formal</option>
+                        </select>
+                    </div>
+                    <div class="form-buttons" style="margin-top:1.5rem;">
+                        <button id="applyFilterKelompokBtn" class="btn-primary">Terapkan</button>
+                        <button id="resetFilterKelompokBtn" class="btn-secondary">Reset</button>
+                        <button id="closeFilterKelompokBtn" class="btn-secondary">Tutup</button>
+                    </div>
+                </div>
+            </div>
+        `;
+        document.body.insertAdjacentHTML('beforeend', modalHTML);
+
+        document.getElementById('applyFilterKelompokBtn').onclick = () => {
+            sortStateKelompok = document.getElementById('sortKelompokModal').value;
+            filterStateKelompok.jenis = document.getElementById('filterJenisKelompokModal').value;
+            applyFiltersAndSort();
+            closeFilterModalKelompok();
+        };
+        document.getElementById('resetFilterKelompokBtn').onclick = () => {
+            document.getElementById('sortKelompokModal').value = 'urutanAsc';
+            document.getElementById('filterJenisKelompokModal').value = 'Semua';
+            sortStateKelompok = 'urutanAsc';
+            filterStateKelompok.jenis = 'Semua';
+            applyFiltersAndSort();
+            closeFilterModalKelompok();
+        };
+        document.getElementById('closeFilterKelompokBtn').onclick = closeFilterModalKelompok;
+        document.getElementById('filterModalKelompok').addEventListener('click', (e) => {
+            if (e.target === e.currentTarget) closeFilterModalKelompok();
+        });
+    }
 }
 
-// Form untuk tambah/edit kelompok
-let currentKelompokId = null;
+function openFilterModalKelompok() {
+    const modal = document.getElementById('filterModalKelompok');
+    if (!modal) return;
+    document.getElementById('sortKelompokModal').value = sortStateKelompok;
+    document.getElementById('filterJenisKelompokModal').value = filterStateKelompok.jenis;
+    modal.style.display = 'flex';
+}
 
+function closeFilterModalKelompok() {
+    const modal = document.getElementById('filterModalKelompok');
+    if (modal) modal.style.display = 'none';
+}
+
+// ===== FILTER & SORTIR =====
+function applyFiltersAndSort() {
+    let filtered = allKelompokData.filter(k => {
+        // Search
+        if (searchKeyword) {
+            const match = (k.nama && k.nama.toLowerCase().includes(searchKeyword)) ||
+                          (k.pembina && k.pembina.toLowerCase().includes(searchKeyword));
+            if (!match) return false;
+        }
+        // Filter jenis
+        if (filterStateKelompok.jenis !== 'Semua' && k.jenis !== filterStateKelompok.jenis) return false;
+        return true;
+    });
+
+    // Sortir
+    switch (sortStateKelompok) {
+        case 'urutanAsc':
+            filtered.sort((a, b) => (a.urutan || 0) - (b.urutan || 0));
+            break;
+        case 'namaAsc':
+            filtered.sort((a, b) => (a.nama || '').localeCompare(b.nama || ''));
+            break;
+        case 'namaDesc':
+            filtered.sort((a, b) => (b.nama || '').localeCompare(a.nama || ''));
+            break;
+        case 'anggotaDesc':
+            filtered.sort((a, b) => (b._anggotaCount || 0) - (a._anggotaCount || 0));
+            break;
+        case 'anggotaAsc':
+            filtered.sort((a, b) => (a._anggotaCount || 0) - (b._anggotaCount || 0));
+            break;
+        default: break;
+    }
+
+    renderKelompokList(filtered);
+}
+
+// ===== FORM TAMBAH/EDIT KELOMPOK =====
 function showKelompokForm(editData = null) {
     const formContainer = document.getElementById('kelompok-form-container');
-    const listContainer = document.getElementById('kelompokList');
+    const pageContainer = document.getElementById('kelompok-page-container');
     const headerActions = document.getElementById('kelompok-header-actions');
     
     if (headerActions) headerActions.style.display = 'none';
-    listContainer.style.display = 'none';
+    if (pageContainer) pageContainer.style.display = 'none';
     formContainer.style.display = 'block';
     
-    // Tombol kembali
     let backBtn = document.getElementById('btnBackKelompokForm');
     if (!backBtn) {
         backBtn = document.createElement('button');
@@ -97,7 +233,7 @@ function showKelompokForm(editData = null) {
 
 function hideKelompokForm() {
     document.getElementById('kelompok-form-container').style.display = 'none';
-    document.getElementById('kelompokList').style.display = 'grid';
+    const pageContainer = document.getElementById('kelompok-page-container').style.display ='block';
     const headerActions = document.getElementById('kelompok-header-actions');
     if (headerActions) headerActions.style.display = 'flex';
     const backBtn = document.getElementById('btnBackKelompokForm');
@@ -115,7 +251,6 @@ function buildKelompokFormHtml(editData = null) {
                     <label>Urutan Tampil</label>
                     <input type="number" id="kelompokUrutan" value="0">
                 </div>
-
                 <div class="form-group">
                     <label>Nama Kelompok *</label>
                     <input id="kelompokNama" required>
@@ -163,6 +298,7 @@ async function saveKelompok() {
     } catch (err) { await window.customAlert(err.message); }
 }
 
+// ===== LIHAT ANGGOTA =====
 async function showAnggotaKelompok(kelompokNama, kelompokJenis) {
     const santriSnap = await getDocs(collection(db, "santri"));
     let field = '';
@@ -184,16 +320,31 @@ async function showAnggotaKelompok(kelompokNama, kelompokJenis) {
     document.getElementById('detailKelompokModal').style.display = 'flex';
 }
 
-function renderKelompokList(kelompoks) {
+// ===== RENDER LIST =====
+async function renderKelompokList(kelompoks) {
     const container = document.getElementById('kelompokList');
     if (!container) return;
-    
+
+    // Hitung jumlah anggota untuk setiap kelompok
+    const santriSnap = await getDocs(collection(db, "santri"));
+    const santriList = santriSnap.docs.map(d => d.data());
+    const countMap = {};
+    kelompoks.forEach(k => {
+        let count = 0;
+        if (k.jenis === 'Ngaji') count = santriList.filter(s => s.kepesantrenan?.kelompokNgaji === k.nama).length;
+        else if (k.jenis === 'Belajar') count = santriList.filter(s => s.kepesantrenan?.kelompokBelajar === k.nama).length;
+        else if (k.jenis === 'Diniyah') count = santriList.filter(s => s.kepesantrenan?.kelasDiniyah === k.nama).length;
+        else count = santriList.filter(s => s.kepesantrenan?.kelasFormal === k.nama).length;
+        k._anggotaCount = count;
+        countMap[k.id] = count;
+    });
+
     if (kelompoks.length === 0) {
-        container.innerHTML = "<p class='empty-state'>Belum ada kelompok. Klik tombol Tambah Kelompok.</p>";
+        container.innerHTML = "<p class='empty-state'>Tidak ada kelompok yang sesuai.</p>";
         container.style.display = 'grid';
         return;
     }
-    
+
     // Kelompokkan berdasarkan jenis
     const grouped = {
         'Ngaji': [],
@@ -205,7 +356,7 @@ function renderKelompokList(kelompoks) {
         if (grouped[k.jenis]) grouped[k.jenis].push(k);
         else grouped[k.jenis] = [k];
     });
-    
+
     let html = '';
     const jenisUrutan = ['Ngaji', 'Belajar', 'Diniyah', 'Formal'];
     for (const jenis of jenisUrutan) {
@@ -220,6 +371,7 @@ function renderKelompokList(kelompoks) {
                     <div class="kelompok-grid-inner">
             `;
             for (let k of items) {
+                const count = countMap[k.id] || 0;
                 html += `
                     <div class="kelompok-card">
                         <div class="card-header">
@@ -229,7 +381,8 @@ function renderKelompokList(kelompoks) {
                         <div class="card-body">
                             <div class="info-row"><i class="fas fa-tag"></i> <strong>Jenis:</strong> ${escapeHtml(k.jenis)}</div>
                             <div class="info-row"><i class="fas fa-chalkboard-user"></i> <strong>Pembina:</strong> ${escapeHtml(k.pembina) || '-'}</div>
-                            <div class="info-row"><i class="fas fa-users"></i> <strong>Jumlah Anggota:</strong> <span id="count-${k.id}">...</span></div>
+                            <div class="info-row"><i class="fas fa-users"></i> <strong>Jumlah Anggota:</strong> ${count}</div>
+                            ${k.urutan !== undefined ? `<div class="info-row"><i class="fas fa-sort"></i> <strong>Urutan:</strong> ${k.urutan}</div>` : ''}
                         </div>
                         <div class="card-actions">
                             <button class="lihatAnggotaKelompok" data-nama="${escapeHtml(k.nama)}" data-jenis="${escapeHtml(k.jenis)}"><i class="fas fa-eye"></i> Anggota</button>
@@ -242,35 +395,33 @@ function renderKelompokList(kelompoks) {
             html += `</div></div>`;
         }
     }
-    
+
     container.innerHTML = html;
     container.style.display = 'block';
-    
-    // Update jumlah anggota
-    updateAnggotaCounts(kelompoks);
-    
+
     // Event listeners
-    document.querySelectorAll('.lihatAnggotaKelompok').forEach(btn => {
+    container.querySelectorAll('.lihatAnggotaKelompok').forEach(btn => {
         btn.addEventListener('click', () => showAnggotaKelompok(btn.dataset.nama, btn.dataset.jenis));
     });
-    document.querySelectorAll('.editKelompok').forEach(btn => {
+    container.querySelectorAll('.editKelompok').forEach(btn => {
         btn.addEventListener('click', async () => {
             const id = btn.dataset.id;
             const docSnap = await getDoc(doc(db, "kelompok", id));
             if (docSnap.exists()) showKelompokForm({ id, ...docSnap.data() });
         });
     });
-    document.querySelectorAll('.hapusKelompok').forEach(btn => {
+    container.querySelectorAll('.hapusKelompok').forEach(btn => {
         btn.addEventListener('click', async () => {
             const id = btn.dataset.id;
             if (await window.customConfirm("Hapus kelompok ini?")) {
-                await deleteDoc(doc(db, "kelompok", id));
+                try {
+                    await deleteDoc(doc(db, "kelompok", id));
+                } catch (err) { await window.customAlert(err.message); }
             }
         });
     });
 }
 
-// Fungsi helper untuk ikon berdasarkan jenis
 function getJenisIcon(jenis) {
     switch(jenis) {
         case 'Ngaji': return 'fa-book-quran';
@@ -281,29 +432,67 @@ function getJenisIcon(jenis) {
     }
 }
 
-async function updateAnggotaCounts(kelompoks) {
+// ===== LISTENER & SYNC =====
+function listenKelompok() {
+    if (unsubscribeKelompok) unsubscribeKelompok();
+    const q = query(collection(db, "kelompok"), orderBy("urutan", "asc"));
+    unsubscribeKelompok = onSnapshot(q, (snapshot) => {
+        allKelompokData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        // Reset filter options (jenis sudah statis)
+        applyFiltersAndSort();
+    });
+}
+
+// ===== EKSPOR CSV =====
+async function exportKelompokToCSV() {
+    const data = allKelompokData;
+    if (data.length === 0) {
+        await window.customAlert("Tidak ada data kelompok untuk diekspor.");
+        return;
+    }
+    // Hitung jumlah anggota
     const santriSnap = await getDocs(collection(db, "santri"));
     const santriList = santriSnap.docs.map(d => d.data());
-    for (let k of kelompoks) {
+    const countMap = {};
+    data.forEach(k => {
         let count = 0;
         if (k.jenis === 'Ngaji') count = santriList.filter(s => s.kepesantrenan?.kelompokNgaji === k.nama).length;
         else if (k.jenis === 'Belajar') count = santriList.filter(s => s.kepesantrenan?.kelompokBelajar === k.nama).length;
         else if (k.jenis === 'Diniyah') count = santriList.filter(s => s.kepesantrenan?.kelasDiniyah === k.nama).length;
         else count = santriList.filter(s => s.kepesantrenan?.kelasFormal === k.nama).length;
-        const span = document.getElementById(`count-${k.id}`);
-        if (span) span.innerText = count;
-    }
-}
-
-function listenKelompok() {
-    if (unsubscribeKelompok) unsubscribeKelompok();
-    const q = query(collection(db, "kelompok"), orderBy("urutan", "asc"));
-    unsubscribeKelompok = onSnapshot(q, (snapshot) => {
-        const kelompoks = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-        renderKelompokList(kelompoks);
+        countMap[k.id] = count;
     });
-}
 
+    const columns = ["Nama", "Jenis", "Pembina", "Urutan", "Jumlah Anggota"];
+    const rows = [columns];
+    for (const k of data) {
+        const row = [
+            k.nama || '',
+            k.jenis || '',
+            k.pembina || '',
+            k.urutan || 0,
+            countMap[k.id] || 0
+        ];
+        const escaped = row.map(val => {
+            let str = String(val);
+            if (str.includes(',') || str.includes('"') || str.includes('\n')) {
+                str = '"' + str.replace(/"/g, '""') + '"';
+            }
+            return str;
+        });
+        rows.push(escaped);
+    }
+    const csvContent = rows.map(r => r.join(',')).join('\n');
+    const blob = new Blob(["\uFEFF" + csvContent], { type: "text/csv;charset=utf-8;" });
+    const link = document.createElement("a");
+    const url = URL.createObjectURL(blob);
+    link.href = url;
+    link.setAttribute("download", `kelompok_export_${new Date().toISOString().slice(0,10)}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+}
 
 function escapeHtml(str) {
     if (!str) return '';
