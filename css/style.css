@@ -335,6 +335,7 @@ body.dark-mode .dark-mode-toggle:hover {
     border-radius: var(--radius);
     box-shadow: var(--shadow-sm);
     font-size: 14px;
+    overflow: auto;
 }
 
 /* Buttons */
@@ -729,7 +730,7 @@ body.dark-mode .form-card {
     margin-bottom: 1rem;
 }
 
-#santri-header-actions {
+#santri-header-actions, #keuangan-header-actions, #asrama-header-actions, #kelompok-header-actions {
     display: flex;
     justify-content: space-between;
     align-items: center;
@@ -1038,8 +1039,10 @@ body.dark-mode .anggota-list li {
 
 /* Responsif */
 @media (max-width: 768px) {
-    .asrama-grid {
+    .asrama-grid, .kelompok-grid {
         grid-template-columns: 1fr;
+        overflow: auto;
+        max-height: calc(100vh - 200px);
     }
     .card-actions button {
         font-size: 0.7rem;
@@ -1392,7 +1395,7 @@ body.dark-mode .stat-label {
     font-size: 0.8rem;
     color: var(--gray-600);
 }
-.transaksi-list, .asrama-list, .kelompok-list {
+#transaksi-list, #asrama-list, #kelompok-list {
     max-height: 300px;
     overflow-y: auto;
 }
@@ -1463,7 +1466,7 @@ body.dark-mode .badge {
     color: var(--gray-500);
     font-size: 0.9rem;
 }
-.search-input {
+.search-input, .santri-input {
     padding: 8px 12px 8px 32px;
     border: 1px solid var(--gray-300);
     border-radius: var(--radius-sm);
@@ -1471,6 +1474,11 @@ body.dark-mode .badge {
     font-size: 0.9rem;
 }
 .search-input:focus {
+    outline: none;
+    border-color: var(--primary);
+}
+
+.santri-input:focus {
     outline: none;
     border-color: var(--primary);
 }
@@ -2115,10 +2123,16 @@ body.page-chat .chat-container {
 }
 
 /* Global */
-#santri-table-container {
+#santri-table-container, #asramaList, #kelompok-scroll-area {
     width: 100%;
     overflow: auto;
-    max-height: calc(100vh - 200px);
+    max-height: calc(100vh - 230px);
+}
+
+.dashboard-container, .about-container {
+    width: 100%;
+    overflow: auto;
+    max-height: calc(100vh - 180px);
 }
 
 #santri-table-container table {
@@ -2130,5 +2144,49 @@ body.page-chat .chat-container {
 @media (max-width: 768px) {
     body.page-chat .chat-container {
         height: calc(100vh - 120px);
+    }
+
+    .search-input {
+        width: 160px;
+    }
+
+    .santri-input {
+        width: 100%;
+    }
+
+    .santri-detail-card, .form-card {
+        height: calc(100vh - 210px);
+        overflow: auto;
+    }
+
+}
+
+/* ===== KEUANGAN PAGE - STICKY HEADER & SCROLL ===== */
+#keuangan-page-container {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    max-height: calc(100vh - 140px);
+}
+
+body.dark-mode #keuangan-header-actions {
+    background: var(--bg-surface);
+    border-bottom-color: var(--border-color);
+}
+
+#keuangan-scroll-area {
+    flex: 1;
+    overflow-y: auto;
+    padding-right: 4px;
+    max-height: calc(100vh - 230px);
+}
+
+#keuangan-scroll-area .table-container {
+    overflow-x: auto;
+}
+
+@media (max-width: 768px) {
+    #keuangan-page-container {
+        max-height: calc(100vh - 110px);
     }
 }
