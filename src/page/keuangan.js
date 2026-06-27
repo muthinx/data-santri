@@ -5,25 +5,473 @@ let unsubscribeKeuangan = null;
 let currentEditId = null;
 let currentTransaksiId = null;
 
+// State untuk filter & sortir keuangan
+let filterStateKeuangan = {
+    jenis: 'Semua',
+    santriId: 'Semua',
+    admin: 'Semua'
+};
+let sortStateKeuangan = 'tanggalDesc';
+let allTransaksiData = [];
+
 export function loadKeuangan(container) {
-    console.log("loadKeuangan: window.currentAdminName =", window.currentAdminName);
     renderKeuanganPage(container);
     listenKeuangan();
 }
 
 function renderKeuanganPage(container) {
     container.innerHTML = `
-        <div id="keuangan-header-actions">
-            <div class="header-left-buttons">
-                <button id="btnTambahTransaksi" class="btn-primary"><i class="fas fa-plus"></i> Tambah Transaksi</button>
+        <div id="keuangan-page-container">
+            <div id="keuangan-header-actions">
+                <div class="header-left-buttons">
+                    <button id="btnTambahTransaksi" class="btn-primary"><i class="fas fa-plus"></i></button>
+                    <button id="btnFilterKeuangan" class="btn-secondary"><i class="fas fa-sliders-h"></i> Filter</button>
+                </div>
+                <div class="search-wrapper">
+                    <i class="fas fa-search search-icon"></i>
+                    <input type="text" id="searchKeuangan" placeholder="Cari nama santri..." class="search-input">
+                </div>
+                <div class="header-right-buttons desktop-only">
+                    <button id="btnExportKeuanganCSV" class="btn-secondary"><i class="fas fa-download"></i> Ekspor CSV</button>
+                    <button id="btnImportKeuanganCSV" class="btn-secondary"><i class="fas fa-upload"></i> Impor CSV</button>
+                    <input type="file" id="fileImportKeuanganCSV" accept=".csv" style="display:none" />
+                </div>
+            </div>
+            <div id="keuangan-scroll-area">
+                <div id="keuanganTable"></div>
             </div>
         </div>
         <div id="transaksi-form-container" style="display:none;"></div>
-        <div id="keuanganTable"></div>
     `;
+
+    // Event listeners
     document.getElementById('btnTambahTransaksi').onclick = () => showFormTransaksi();
+    document.getElementById('btnFilterKeuangan').onclick = () => openFilterModalKeuangan();
+    document.getElementById('btnExportKeuanganCSV').onclick = () => exportKeuanganToCSV();
+    const searchInput = document.getElementById('searchKeuangan');
+    if (searchInput) {
+        searchInput.addEventListener('input', () => applyFiltersAndSortKeuangan());
+    }
+    const importBtn = document.getElementById('btnImportKeuanganCSV');
+    const fileInput = document.getElementById('fileImportKeuanganCSV');
+    importBtn.onclick = () => fileInput.click();
+    fileInput.onchange = (e) => {
+        if (e.target.files.length > 0) importKeuanganFromCSV(e.target.files[0]);
+        fileInput.value = '';
+    };
+
+    // Buat modal filter keuangan (sekali di body)
+    if (!document.getElementById('filterModalKeuangan')) {
+        const modalHTML = `
+            <div id="filterModalKeuangan" class="modal" style="display:none;">
+                <div class="modal-content">
+                    <h3><i class="fas fa-sliders-h"></i> Filter & Urutkan Transaksi</h3>
+                    <div class="form-group">
+                        <label for="sortKeuanganModal">Urutkan</label>
+                        <select id="sortKeuanganModal">
+                            <option value="tanggalDesc">Tanggal (terbaru)</option>
+                            <option value="tanggalAsc">Tanggal (terlama)</option>
+                            <option value="namaSantri">Nama Santri</option>
+                            <option value="jenis">Jenis</option>
+                            <option value="jumlahDesc">Jumlah (terbesar)</option>
+                            <option value="jumlahAsc">Jumlah (terkecil)</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="filterJenisKeuanganModal">Jenis Transaksi</label>
+                        <select id="filterJenisKeuanganModal">
+                            <option value="Semua">Semua</option>
+                            <option value="Pemasukan">Pemasukan</option>
+                            <option value="Pengeluaran">Pengeluaran</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="filterSantriKeuanganModal">Santri</label>
+                        <select id="filterSantriKeuanganModal">
+                            <option value="Semua">Semua</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="filterAdminKeuanganModal">Admin</label>
+                        <select id="filterAdminKeuanganModal">
+                            <option value="Semua">Semua</option>
+                        </select>
+                    </div>
+                    <div class="form-buttons" style="margin-top:1.5rem;">
+                        <button id="applyFilterKeuanganBtn" class="btn-primary">Terapkan</button>
+                        <button id="resetFilterKeuanganBtn" class="btn-secondary">Reset</button>
+                        <button id="closeFilterKeuanganBtn" class="btn-secondary">Tutup</button>
+                    </div>
+                </div>
+            </div>
+        `;
+        document.body.insertAdjacentHTML('beforeend', modalHTML);
+
+        document.getElementById('applyFilterKeuanganBtn').onclick = () => {
+            sortStateKeuangan = document.getElementById('sortKeuanganModal').value;
+            filterStateKeuangan.jenis = document.getElementById('filterJenisKeuanganModal').value;
+            filterStateKeuangan.santriId = document.getElementById('filterSantriKeuanganModal').value;
+            filterStateKeuangan.admin = document.getElementById('filterAdminKeuanganModal').value;
+            applyFiltersAndSortKeuangan();
+            closeFilterModalKeuangan();
+        };
+        document.getElementById('resetFilterKeuanganBtn').onclick = () => {
+            document.getElementById('sortKeuanganModal').value = 'tanggalDesc';
+            document.getElementById('filterJenisKeuanganModal').value = 'Semua';
+            document.getElementById('filterSantriKeuanganModal').value = 'Semua';
+            document.getElementById('filterAdminKeuanganModal').value = 'Semua';
+            sortStateKeuangan = 'tanggalDesc';
+            filterStateKeuangan.jenis = 'Semua';
+            filterStateKeuangan.santriId = 'Semua';
+            filterStateKeuangan.admin = 'Semua';
+            applyFiltersAndSortKeuangan();
+            closeFilterModalKeuangan();
+        };
+        document.getElementById('closeFilterKeuanganBtn').onclick = closeFilterModalKeuangan;
+        document.getElementById('filterModalKeuangan').addEventListener('click', (e) => {
+            if (e.target === e.currentTarget) closeFilterModalKeuangan();
+        });
+    }
+
+    updateFilterOptionsKeuangan();
 }
 
+// ===== MODAL FILTER =====
+function openFilterModalKeuangan() {
+    const modal = document.getElementById('filterModalKeuangan');
+    if (!modal) return;
+    document.getElementById('sortKeuanganModal').value = sortStateKeuangan;
+    document.getElementById('filterJenisKeuanganModal').value = filterStateKeuangan.jenis;
+    document.getElementById('filterSantriKeuanganModal').value = filterStateKeuangan.santriId;
+    document.getElementById('filterAdminKeuanganModal').value = filterStateKeuangan.admin;
+    modal.style.display = 'flex';
+}
+
+function closeFilterModalKeuangan() {
+    const modal = document.getElementById('filterModalKeuangan');
+    if (modal) modal.style.display = 'none';
+}
+
+// ===== UPDATE OPSI FILTER DINAMIS =====
+function updateFilterOptionsKeuangan() {
+    const santriSet = new Set();
+    const adminSet = new Set();
+    allTransaksiData.forEach(t => {
+        if (t.santriId) santriSet.add(t.santriId);
+        if (t.admin) adminSet.add(t.admin);
+    });
+
+    const santriSelect = document.getElementById('filterSantriKeuanganModal');
+    const adminSelect = document.getElementById('filterAdminKeuanganModal');
+    if (santriSelect) {
+        const currentVal = santriSelect.value;
+        santriSelect.innerHTML = '<option value="Semua">Semua</option>';
+        const santriMap = {};
+        allTransaksiData.forEach(t => {
+            if (t.santriId && t.namaSantri) {
+                santriMap[t.santriId] = t.namaSantri;
+            }
+        });
+        Array.from(santriSet).sort().forEach(id => {
+            const nama = santriMap[id] || id;
+            santriSelect.innerHTML += `<option value="${escapeHtml(id)}">${escapeHtml(nama)}</option>`;
+        });
+        santriSelect.value = currentVal;
+    }
+    if (adminSelect) {
+        const currentVal = adminSelect.value;
+        adminSelect.innerHTML = '<option value="Semua">Semua</option>';
+        Array.from(adminSet).sort().forEach(admin => {
+            adminSelect.innerHTML += `<option value="${escapeHtml(admin)}">${escapeHtml(admin)}</option>`;
+        });
+        adminSelect.value = currentVal;
+    }
+}
+
+// ===== FILTER & SORTIR =====
+function applyFiltersAndSortKeuangan() {
+    const keyword = document.getElementById('searchKeuangan')?.value?.toLowerCase() || '';
+    let filtered = allTransaksiData.filter(t => {
+        if (keyword && !(t.namaSantri && t.namaSantri.toLowerCase().includes(keyword))) return false;
+        if (filterStateKeuangan.jenis !== 'Semua' && t.jenis !== filterStateKeuangan.jenis) return false;
+        if (filterStateKeuangan.santriId !== 'Semua' && t.santriId !== filterStateKeuangan.santriId) return false;
+        if (filterStateKeuangan.admin !== 'Semua' && t.admin !== filterStateKeuangan.admin) return false;
+        return true;
+    });
+
+    switch (sortStateKeuangan) {
+        case 'tanggalDesc':
+            filtered.sort((a, b) => new Date(b.tanggal) - new Date(a.tanggal));
+            break;
+        case 'tanggalAsc':
+            filtered.sort((a, b) => new Date(a.tanggal) - new Date(b.tanggal));
+            break;
+        case 'namaSantri':
+            filtered.sort((a, b) => (a.namaSantri || '').localeCompare(b.namaSantri || ''));
+            break;
+        case 'jenis':
+            filtered.sort((a, b) => (a.jenis || '').localeCompare(b.jenis || ''));
+            break;
+        case 'jumlahDesc':
+            filtered.sort((a, b) => (b.jumlah || 0) - (a.jumlah || 0));
+            break;
+        case 'jumlahAsc':
+            filtered.sort((a, b) => (a.jumlah || 0) - (b.jumlah || 0));
+            break;
+        default: break;
+    }
+
+    renderKeuanganTable(filtered);
+}
+
+// ===== RENDER TABEL =====
+function renderKeuanganTable(transaksis) {
+    const container = document.getElementById('keuanganTable');
+    if (!container) return;
+
+    const total = allTransaksiData.length;
+    if (transaksis.length === 0) {
+        container.innerHTML = `
+            <div class="santri-count">Menampilkan 0 dari ${total} transaksi</div>
+            <p style="margin: 10px; text-align: center; font-size: large;">Tidak ada transaksi.</p>
+        `;
+        return;
+    }
+
+    const isMobile = window.innerWidth <= 768;
+    let html = `<div class="santri-count">Menampilkan ${transaksis.length} dari ${total} transaksi</div>`;
+    html += '<div class="table-container"><table class="keuangan-table">';
+
+    if (isMobile) {
+        html += `<thead><tr><th>Tanggal</th><th>Santri</th><th>Jenis</th><th>Jumlah</th><th>Aksi</th></tr></thead><tbody>`;
+        transaksis.forEach(trans => {
+            html += `<tr>
+                        <td>${formatTanggal(trans.tanggal)}</td>
+                        <td><a href="#" class="santri-link" data-id="${trans.santriId}">${escapeHtml(trans.namaSantri)}</a></td>
+                        <td style="color:${trans.jenis === 'Pemasukan' ? '#2e7d32' : '#c62828'}">${trans.jenis}</td>
+                        <td>Rp ${(trans.jumlah || 0).toLocaleString()}</td>
+                        <td class="action-cell">
+                            <button class="edit-transaksi-btn" data-id="${trans.id}">Edit</button>
+                        </td>
+                    </tr>`;
+        });
+    } else {
+        html += `<thead><tr>
+                    <th>Nomor Transaksi</th>
+                    <th>Tanggal</th>
+                    <th>Nama Santri</th>
+                    <th>Jenis</th>
+                    <th>Jumlah</th>
+                    <th>Admin</th>
+                    <th>Aksi</th>
+                </tr></thead><tbody>`;
+        transaksis.forEach(trans => {
+            html += `<tr>
+                        <td>${escapeHtml(trans.nomorTransaksi || '-')}</td>
+                        <td>${formatTanggal(trans.tanggal)}</td>
+                        <td><a href="#" class="santri-link" data-id="${trans.santriId}">${escapeHtml(trans.namaSantri)}</a></td>
+                        <td style="color:${trans.jenis === 'Pemasukan' ? '#2e7d32' : '#c62828'}">${trans.jenis}</td>
+                        <td>Rp ${(trans.jumlah || 0).toLocaleString()}</td>
+                        <td>${escapeHtml(trans.admin || '-')}</td>
+                        <td class="action-cell">
+                            <button class="edit-transaksi-btn" data-id="${trans.id}">Edit</button>
+                        </td>
+                    </tr>`;
+        });
+    }
+    html += `</tbody></table></div>`;
+    container.innerHTML = html;
+
+    // Event listener untuk link santri
+    document.querySelectorAll('.santri-link').forEach(link => {
+        link.addEventListener('click', async (e) => {
+            e.preventDefault();
+            const santriId = link.dataset.id;
+            await showSantriKeuangan(santriId);
+        });
+    });
+
+    // Event listener untuk tombol Edit
+    document.querySelectorAll('.edit-transaksi-btn').forEach(btn => {
+        btn.addEventListener('click', async () => {
+            const id = btn.dataset.id;
+            const docSnap = await getDoc(doc(db, "keuangan", id));
+            if (docSnap.exists()) showFormTransaksi({ id, ...docSnap.data() });
+        });
+    });
+}
+
+// ===== EKSPOR CSV =====
+async function exportKeuanganToCSV() {
+    const data = allTransaksiData;
+    if (data.length === 0) {
+        await window.customAlert("Tidak ada transaksi untuk diekspor.");
+        return;
+    }
+    const columns = ["nomorTransaksi", "tanggal", "namaSantri", "jenis", "jumlah", "admin", "keterangan"];
+    const rows = [columns];
+    for (const t of data) {
+        const row = columns.map(col => {
+            let value = t[col];
+            if (value === undefined || value === null) return '';
+            if (col === 'tanggal') value = formatTanggal(value);
+            if (col === 'jumlah') value = value.toString();
+            let str = String(value);
+            if (str.includes(',') || str.includes('"') || str.includes('\n')) {
+                str = '"' + str.replace(/"/g, '""') + '"';
+            }
+            return str;
+        });
+        rows.push(row);
+    }
+    const csvContent = rows.map(row => row.join(',')).join('\n');
+    const blob = new Blob(["\uFEFF" + csvContent], { type: "text/csv;charset=utf-8;" });
+    const link = document.createElement("a");
+    const url = URL.createObjectURL(blob);
+    link.href = url;
+    link.setAttribute("download", `keuangan_export_${new Date().toISOString().slice(0,10)}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+}
+
+// ===== IMPOR CSV =====
+async function importKeuanganFromCSV(file) {
+    const reader = new FileReader();
+    reader.onload = async (e) => {
+        const content = e.target.result;
+        const rows = parseCSV(content);
+        if (rows.length < 2) {
+            await window.customAlert("File CSV tidak memiliki data (minimal header + 1 baris data).");
+            return;
+        }
+        const headers = rows[0];
+        const expectedHeaders = ["nomorTransaksi", "tanggal", "namaSantri", "jenis", "jumlah", "admin", "keterangan"];
+        const headerIndex = {};
+        for (let i = 0; i < headers.length; i++) {
+            const h = headers[i].trim();
+            if (expectedHeaders.includes(h)) headerIndex[h] = i;
+        }
+        const missing = expectedHeaders.filter(h => !(h in headerIndex));
+        if (missing.length > 0) {
+            await window.customAlert(`Header CSV tidak lengkap. Kolom yang hilang: ${missing.join(', ')}`);
+            return;
+        }
+
+        const dataRows = rows.slice(1).filter(row => row.some(cell => cell.trim() !== ""));
+        if (dataRows.length === 0) {
+            await window.customAlert("Tidak ada data valid untuk diimpor.");
+            return;
+        }
+
+        const transaksiData = [];
+        const errors = [];
+        for (let i = 0; i < dataRows.length; i++) {
+            const row = dataRows[i];
+            const obj = {};
+            for (const field of expectedHeaders) {
+                const idx = headerIndex[field];
+                obj[field] = (idx !== undefined && row[idx] !== undefined) ? row[idx].trim() : '';
+            }
+            if (!obj.namaSantri) { errors.push(`Baris ${i+2}: namaSantri wajib diisi`); continue; }
+            if (!obj.tanggal) { errors.push(`Baris ${i+2}: tanggal wajib diisi`); continue; }
+            if (!obj.jenis || !["Pemasukan", "Pengeluaran"].includes(obj.jenis)) {
+                errors.push(`Baris ${i+2}: jenis harus 'Pemasukan' atau 'Pengeluaran'`);
+                continue;
+            }
+            const jumlah = parseInt(obj.jumlah);
+            if (isNaN(jumlah) || jumlah <= 0) {
+                errors.push(`Baris ${i+2}: jumlah harus angka positif`);
+                continue;
+            }
+            obj.jumlah = jumlah;
+            const santriQuery = query(collection(db, "santri"), where("nama", "==", obj.namaSantri));
+            const santriSnap = await getDocs(santriQuery);
+            if (santriSnap.empty) {
+                errors.push(`Baris ${i+2}: santri dengan nama "${obj.namaSantri}" tidak ditemukan`);
+                continue;
+            }
+            obj.santriId = santriSnap.docs[0].id;
+            if (!obj.admin) obj.admin = window.currentAdminName || auth.currentUser?.email || "Admin";
+            transaksiData.push(obj);
+        }
+
+        if (errors.length > 0) {
+            await window.customAlert(`Terdapat ${errors.length} error pada data:\n${errors.slice(0,5).join('\n')}${errors.length > 5 ? `\n... dan ${errors.length-5} lainnya` : ''}`);
+            return;
+        }
+
+        const ok = await window.customConfirm(`Akan mengimpor ${transaksiData.length} transaksi. Lanjutkan?`);
+        if (!ok) return;
+
+        let successCount = 0, errorCount = 0;
+        const batchSize = 500;
+        for (let i = 0; i < transaksiData.length; i += batchSize) {
+            const batch = writeBatch(db);
+            const chunk = transaksiData.slice(i, i + batchSize);
+            for (const trans of chunk) {
+                try {
+                    const nomorTransaksi = await generateNomorTransaksi();
+                    const dataToSave = {
+                        nomorTransaksi,
+                        santriId: trans.santriId,
+                        namaSantri: trans.namaSantri,
+                        jenis: trans.jenis,
+                        jumlah: trans.jumlah,
+                        tanggal: trans.tanggal,
+                        keterangan: trans.keterangan || '',
+                        admin: trans.admin,
+                        saldo: 0,
+                        createdAt: new Date().toISOString()
+                    };
+                    const docRef = doc(collection(db, "keuangan"));
+                    batch.set(docRef, dataToSave);
+                    successCount++;
+                } catch (err) {
+                    errorCount++;
+                    console.error("Error import transaksi:", err);
+                }
+            }
+            if (chunk.length > 0) await batch.commit();
+        }
+        await recalculateAllSaldo();
+        await window.customAlert(`Impor selesai. Sukses: ${successCount}, Gagal: ${errorCount}`);
+    };
+    reader.onerror = () => alert("Gagal membaca file.");
+    reader.readAsText(file, "UTF-8");
+}
+
+function parseCSV(text) {
+    const rows = [];
+    let inQuote = false, currentRow = [], currentField = '';
+    let i = 0;
+    while (i < text.length) {
+        const ch = text[i];
+        if (ch === '"') {
+            if (inQuote && text[i+1] === '"') { currentField += '"'; i++; }
+            else inQuote = !inQuote;
+        } else if (ch === ',' && !inQuote) {
+            currentRow.push(currentField);
+            currentField = '';
+        } else if (ch === '\n' && !inQuote) {
+            currentRow.push(currentField);
+            rows.push(currentRow);
+            currentRow = [];
+            currentField = '';
+        } else {
+            currentField += ch;
+        }
+        i++;
+    }
+    if (currentField !== '' || currentRow.length > 0) {
+        currentRow.push(currentField);
+        rows.push(currentRow);
+    }
+    return rows.map(row => row.map(field => field.trim()));
+}
+
+// ===== CRUD =====
 async function loadSantriDropdown() {
     const snap = await getDocs(collection(db, "santri"));
     const select = document.getElementById('namaSantriSelect');
@@ -41,27 +489,19 @@ async function generateNomorTransaksi() {
     const mm = String(today.getMonth() + 1).padStart(2, '0');
     const dd = String(today.getDate()).padStart(2, '0');
     const prefix = `TRX-${yyyy}${mm}${dd}`;
-    
-    // Ambil semua transaksi, filter manual di JS
     const snap = await getDocs(collection(db, "keuangan"));
     let count = 1;
     snap.forEach(docSnap => {
         const trx = docSnap.data();
-        if (trx.nomorTransaksi && trx.nomorTransaksi.startsWith(prefix)) {
-            count++;
-        }
+        if (trx.nomorTransaksi && trx.nomorTransaksi.startsWith(prefix)) count++;
     });
     return `${prefix}-${String(count).padStart(3, '0')}`;
 }
 
-// Hitung saldo terakhir dengan sorting manual di JS
 async function getLastSaldo() {
     const snap = await getDocs(collection(db, "keuangan"));
     let transactions = [];
-    snap.forEach(docSnap => {
-        transactions.push({ id: docSnap.id, ...docSnap.data() });
-    });
-    // Sortir berdasarkan tanggal, lalu nomor transaksi
+    snap.forEach(docSnap => transactions.push({ id: docSnap.id, ...docSnap.data() }));
     transactions.sort((a, b) => {
         if (a.tanggal !== b.tanggal) return a.tanggal.localeCompare(b.tanggal);
         return (a.nomorTransaksi || '').localeCompare(b.nomorTransaksi || '');
@@ -73,8 +513,7 @@ async function getLastSaldo() {
 async function saveTransaksiForm() {
     const namaSantri = document.getElementById('namaSantriInput').value.trim();
     if (!namaSantri) return await window.customAlert("Pilih nama santri");
-    
-    // Cari santriId berdasarkan nama
+
     const santriQuery = query(collection(db, "santri"), where("nama", "==", namaSantri));
     const santriSnap = await getDocs(santriQuery);
     if (santriSnap.empty) {
@@ -83,7 +522,7 @@ async function saveTransaksiForm() {
     }
     const santriId = santriSnap.docs[0].id;
     const namaSantriDoc = santriSnap.docs[0].data().nama;
-    
+
     const jenis = document.getElementById('jenisTransaksi').value;
     const jumlah = parseInt(document.getElementById('jumlahTransaksi').value);
     if (isNaN(jumlah) || jumlah <= 0) return await window.customAlert("Jumlah harus positif");
@@ -91,9 +530,8 @@ async function saveTransaksiForm() {
     if (!tanggal) return await window.customAlert("Pilih tanggal");
     const keterangan = document.getElementById('keteranganTransaksi').value;
     const admin = window.currentAdminName || auth.currentUser?.email || "Admin";
-    
+
     if (currentTransaksiId) {
-        // Edit: update data (tidak mengubah nomor transaksi dan saldo? Lebih baik tidak izinkan edit atau rekalkulasi)
         await window.customAlert("Edit transaksi tidak diizinkan untuk menjaga konsistensi saldo. Hapus dan buat baru.");
         return;
     } else {
@@ -114,31 +552,6 @@ async function saveTransaksiForm() {
     }
 }
 
-function openTransaksiModal(editData = null) {
-    if (editData) {
-        currentEditId = editData.id;
-        document.getElementById('modalTransaksiTitle').innerText = "Edit Transaksi";
-        document.getElementById('namaSantriSelect').value = editData.santriId;
-        document.getElementById('jenisTransaksi').value = editData.jenis;
-        document.getElementById('jumlahTransaksi').value = editData.jumlah;
-        document.getElementById('tglTransaksi').value = editData.tanggal;
-        document.getElementById('keteranganTransaksi').value = editData.keterangan || '';
-    } else {
-        currentEditId = null;
-        document.getElementById('namaSantriSelect').value = "";
-        document.getElementById('jenisTransaksi').value = "Pemasukan";
-        document.getElementById('jumlahTransaksi').value = "";
-        document.getElementById('tglTransaksi').value = new Date().toISOString().slice(0,10);
-        document.getElementById('keteranganTransaksi').value = "";
-    }
-    document.getElementById('transaksiModal').style.display = 'flex';
-}
-
-function closeTransaksiModal() {
-    document.getElementById('transaksiModal').style.display = 'none';
-    currentEditId = null;
-}
-
 async function deleteTransaksi(id) {
     if (await window.customConfirm("Hapus transaksi ini? Saldo akan dihitung ulang secara otomatis.")) {
         try {
@@ -154,138 +567,38 @@ async function deleteTransaksi(id) {
 async function recalculateAllSaldo() {
     const snap = await getDocs(collection(db, "keuangan"));
     let transactions = [];
-    snap.forEach(docSnap => {
-        transactions.push({ id: docSnap.id, ...docSnap.data() });
-    });
-    // Sortir berdasarkan tanggal, lalu nomor transaksi
+    snap.forEach(docSnap => transactions.push({ id: docSnap.id, ...docSnap.data() }));
     transactions.sort((a, b) => {
         if (a.tanggal !== b.tanggal) return a.tanggal.localeCompare(b.tanggal);
         return (a.nomorTransaksi || '').localeCompare(b.nomorTransaksi || '');
     });
-    
     let runningSaldo = 0;
     for (const trans of transactions) {
-        if (trans.jenis === "Pemasukan") {
-            runningSaldo += trans.jumlah;
-        } else {
-            runningSaldo -= trans.jumlah;
-        }
+        if (trans.jenis === "Pemasukan") runningSaldo += trans.jumlah;
+        else runningSaldo -= trans.jumlah;
         await updateDoc(doc(db, "keuangan", trans.id), { saldo: runningSaldo });
     }
-    console.log("Saldo berhasil dihitung ulang");
-}
-
-function renderKeuanganTable(transaksis) {
-    const container = document.getElementById('keuanganTable');
-    if (!container) return;
-    
-    // Urutkan dari tanggal terbaru ke terlama
-    transaksis.sort((a, b) => new Date(b.tanggal) - new Date(a.tanggal));
-    
-    if (transaksis.length === 0) {
-        container.innerHTML = "<p>Belum ada transaksi.</p>";
-        container.style.display = 'block';
-        return;
-    }
-
-    const isMobile = window.innerWidth <= 768;
-    let html = '<div class="table-container"><table class="keuangan-table">';
-    
-    if (isMobile) {
-        // Mode mobile: hanya kolom: Tanggal, Nama Santri, Jenis, Jumlah, Aksi
-        html += `<thead>
-                    <tr>
-                        <th>Tanggal</th>
-                        <th>Santri</th>
-                        <th>Jenis</th>
-                        <th>Jumlah</th>
-                        <th>Aksi</th>
-                    </tr>
-                </thead><tbody>`;
-        transaksis.forEach(trans => {
-            html += `<tr>
-                        <td>${formatTanggal(trans.tanggal)}</td>
-                        <td><a href="#" class="santri-link" data-id="${trans.santriId}">${escapeHtml(trans.namaSantri)}</a></td>
-                        <td style="color:${trans.jenis === 'Pemasukan' ? '#2e7d32' : '#c62828'}">${trans.jenis}</td>
-                        <td>Rp ${(trans.jumlah || 0).toLocaleString()}</td>
-                        <td class="action-cell">
-                            <button class="edit-transaksi-btn" data-id="${trans.id}">Edit</button>
-                        </td>
-                    </tr>`;
-        });
-    } else {
-        // Mode desktop: tampilkan semua kolom
-        html += `<thead>
-                    <tr>
-                        <th>Nomor Transaksi</th>
-                        <th>Tanggal</th>
-                        <th>Nama Santri</th>
-                        <th>Jenis</th>
-                        <th>Jumlah</th>
-                        <th>Admin</th>
-                        <th>Aksi</th>
-                    </tr>
-                </thead><tbody>`;
-        transaksis.forEach(trans => {
-            html += `<tr>
-                        <td>${escapeHtml(trans.nomorTransaksi || '-')}</td>
-                        <td>${formatTanggal(trans.tanggal)}</td>
-                        <td><a href="#" class="santri-link" data-id="${trans.santriId}">${escapeHtml(trans.namaSantri)}</a></td>
-                        <td style="color:${trans.jenis === 'Pemasukan' ? '#2e7d32' : '#c62828'}">${trans.jenis}</td>
-                        <td>Rp ${(trans.jumlah || 0).toLocaleString()}</td>
-                        <td>${escapeHtml(trans.admin || '-')}</td>
-                        <td class="action-cell">
-                            <button class="edit-transaksi-btn" data-id="${trans.id}">Edit</button>
-                        </td>
-                    </tr>`;
-        });
-    }
-    html += `</tbody></table></div>`;
-    container.innerHTML = html;
-    // Event listener untuk link santri
-    document.querySelectorAll('.santri-link').forEach(link => {
-        link.addEventListener('click', async (e) => {
-            e.preventDefault();
-            const santriId = link.dataset.id;
-            await showSantriKeuangan(santriId);
-        });
-    });
-    container.style.display = 'block';
-
-    // Event listener untuk tombol Edit
-    document.querySelectorAll('.edit-transaksi-btn').forEach(btn => {
-        btn.addEventListener('click', async (e) => {
-            const id = btn.dataset.id;
-            const docSnap = await getDoc(doc(db, "keuangan", id));
-            if (docSnap.exists()) showFormTransaksi({ id, ...docSnap.data() });
-        });
-    });
-}
-
-function formatTanggal(tgl) {
-    if (!tgl) return '-';
-    const parts = tgl.split('-');
-    if (parts.length === 3) return `${parts[2]}/${parts[1]}/${parts[0]}`;
-    return tgl;
 }
 
 function listenKeuangan() {
     if (unsubscribeKeuangan) unsubscribeKeuangan();
     unsubscribeKeuangan = onSnapshot(collection(db, "keuangan"), (snapshot) => {
-        let transaksis = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-        // Sorting dilakukan di dalam renderKeuanganTable
-        renderKeuanganTable(transaksis);
+        allTransaksiData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        updateFilterOptionsKeuangan();
+        applyFiltersAndSortKeuangan();
     });
 }
 
+// ===== FORM TRANSAKSI =====
 async function showFormTransaksi(editData = null) {
     const formContainer = document.getElementById('transaksi-form-container');
-    const tableContainer = document.getElementById('keuanganTable');
+    const pageContainer = document.getElementById('keuangan-page-container');
     const headerActions = document.getElementById('keuangan-header-actions');
-    
+
     if (headerActions) headerActions.style.display = 'none';
-    
-    // Tombol kembali
+    if (pageContainer) pageContainer.style.display = 'none';
+    formContainer.style.display = 'block';
+
     let backBtn = document.getElementById('btnBackTransaksiForm');
     if (!backBtn) {
         backBtn = document.createElement('button');
@@ -297,36 +610,25 @@ async function showFormTransaksi(editData = null) {
     }
     backBtn.style.display = 'inline-flex';
     backBtn.onclick = () => hideFormTransaksi();
-    
-    // Set current id
-    if (editData) {
-        currentTransaksiId = editData.id;
-    } else {
-        currentTransaksiId = null;
-    }
-    
-    formContainer.style.display = 'block';
-    tableContainer.style.display = 'none';
-    formContainer.innerHTML = buildFormTransaksiHtml(editData);
 
+    if (editData) currentTransaksiId = editData.id;
+    else currentTransaksiId = null;
+
+    formContainer.innerHTML = buildFormTransaksiHtml(editData);
     await loadSantriDatalist();
     const namaInput = document.getElementById('namaSantriInput');
-    if (editData && editData.namaSantri) {
-        namaInput.value = editData.namaSantri;
-    }
+    if (editData && editData.namaSantri) namaInput.value = editData.namaSantri;
 
     loadSantriDropdown().then(() => {
         if (editData && editData.santriId) {
             document.getElementById('namaSantriSelect').value = editData.santriId;
         }
     });
-    
-    // Jika mode edit, tambah tombol hapus
+
     if (currentTransaksiId) {
         const formButtons = document.querySelector('#transaksiForm .form-buttons');
         const oldDelete = formButtons.querySelector('.btn-danger');
         if (oldDelete) oldDelete.remove();
-        
         const deleteBtn = document.createElement('button');
         deleteBtn.type = 'button';
         deleteBtn.textContent = 'Hapus';
@@ -345,18 +647,17 @@ async function showFormTransaksi(editData = null) {
         };
         formButtons.appendChild(deleteBtn);
     }
-    
+
     document.getElementById('transaksiForm').onsubmit = (e) => { e.preventDefault(); saveTransaksiForm(); };
     document.getElementById('btnBatalTransaksiForm').onclick = () => hideFormTransaksi();
-    
-    if (editData) {
-        fillTransaksiFormData(editData);
-    }
+
+    if (editData) fillTransaksiFormData(editData);
 }
 
 function hideFormTransaksi() {
     document.getElementById('transaksi-form-container').style.display = 'none';
-    document.getElementById('keuanganTable').style.display = 'block';
+    const pageContainer = document.getElementById('keuangan-page-container');
+    if (pageContainer) pageContainer.style.display = 'flex';
     const headerActions = document.getElementById('keuangan-header-actions');
     if (headerActions) headerActions.style.display = 'flex';
     const backBtn = document.getElementById('btnBackTransaksiForm');
@@ -366,7 +667,6 @@ function hideFormTransaksi() {
 
 function buildFormTransaksiHtml(editData = null) {
     const title = currentTransaksiId ? 'Edit Transaksi' : 'Tambah Transaksi Baru';
-    // Pilihan santri diambil dari database secara dinamis melalui event listener terpisah
     return `
         <div class="form-card">
             <h3>${title}</h3>
@@ -414,14 +714,9 @@ function fillTransaksiFormData(data) {
     document.getElementById('jumlahTransaksi').value = data.jumlah || '';
     document.getElementById('tglTransaksi').value = data.tanggal || '';
     document.getElementById('keteranganTransaksi').value = data.keterangan || '';
-    // set dropdown santri
-    const santriSelect = document.getElementById('namaSantriSelect');
-    if (santriSelect && data.santriId) {
-        santriSelect.value = data.santriId;
-    }
 }
 
-// ========== DETAIL KEUANGAN PER SANTRI ==========
+// ===== DETAIL KEUANGAN SANTRI =====
 async function showSantriKeuangan(santriId) {
     const santriDoc = await getDoc(doc(db, "santri", santriId));
     if (!santriDoc.exists()) {
@@ -429,8 +724,7 @@ async function showSantriKeuangan(santriId) {
         return;
     }
     const santri = santriDoc.data();
-    
-    // Ambil semua transaksi santri ini, urutkan ascending untuk hitung saldo
+
     const q = query(
         collection(db, "keuangan"),
         where("santriId", "==", santriId),
@@ -444,25 +738,18 @@ async function showSantriKeuangan(santriId) {
         const trans = docSnap.data();
         if (trans.jenis === "Pemasukan") runningSaldo += trans.jumlah;
         else runningSaldo -= trans.jumlah;
-        transaksiDenganSaldo.push({
-            id: docSnap.id,
-            ...trans,
-            saldoHitung: runningSaldo
-        });
+        transaksiDenganSaldo.push({ id: docSnap.id, ...trans, saldoHitung: runningSaldo });
     });
     const saldoAkhir = runningSaldo;
-    // Urutkan descending untuk tampilan
     const transaksiTerbaru = [...transaksiDenganSaldo].reverse();
-    
+
     const detailHtml = `
         <div id="santri-keuangan-detail">
             <button id="backToKeuangan" class="btn-secondary" style="margin-bottom:1.5rem">
                 <i class="fas fa-arrow-left"></i> Kembali ke Semua Transaksi
             </button>
             <div class="santri-profile-card">
-                <div class="santri-avatar">
-                    <i class="fas fa-user-graduate"></i>
-                </div>
+                <div class="santri-avatar"><i class="fas fa-user-graduate"></i></div>
                 <div class="santri-info">
                     <h2>${escapeHtml(santri.nama)}</h2>
                     <div class="santri-details">
@@ -481,9 +768,7 @@ async function showSantriKeuangan(santriId) {
                 <h3><i class="fas fa-history"></i> Riwayat Transaksi</h3>
                 <div class="table-container">
                     <table class="keuangan-table">
-                        <thead>
-                            <tr><th>Tanggal</th><th>Jenis</th><th>Jumlah</th><th>Keterangan</th><th>Admin</th></tr>
-                        </thead>
+                        <thead><tr><th>Tanggal</th><th>Jenis</th><th>Jumlah</th><th>Keterangan</th><th>Admin</th></tr></thead>
                         <tbody>
                             ${transaksiTerbaru.map(trans => `
                                 <tr>
@@ -501,7 +786,7 @@ async function showSantriKeuangan(santriId) {
             </div>
         </div>
     `;
-    
+
     const mainContent = document.getElementById('main-content');
     mainContent.innerHTML = detailHtml;
     document.getElementById('backToKeuangan').onclick = async () => {
@@ -524,9 +809,16 @@ async function loadSantriDatalist() {
     });
 }
 
+function formatTanggal(tgl) {
+    if (!tgl) return '-';
+    const parts = tgl.split('-');
+    if (parts.length === 3) return `${parts[2]}/${parts[1]}/${parts[0]}`;
+    return tgl;
+}
+
 function escapeHtml(str) {
     if (!str) return '';
-    return str.replace(/[&<>]/g, function(m) {
+    return str.replace(/[&<>]/g, m => {
         if (m === '&') return '&amp;';
         if (m === '<') return '&lt;';
         if (m === '>') return '&gt;';
