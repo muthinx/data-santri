@@ -1,25 +1,143 @@
 import { db, auth } from '../firebase.js';
-import { collection, addDoc, updateDoc, deleteDoc, doc, onSnapshot, getDoc, getDocs, query, where, orderBy, writeBatch } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+import { collection, addDoc, updateDoc, deleteDoc, doc, onSnapshot, getDoc, getDocs, query, where, orderBy, writeBatch, setDoc, limit, startAfter, startAt } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
 
-let unsubscribeKeuangan = null;
-const ITEMS_PER_PAGE = 40;    // jumlah data per halaman
-let currentPage = 1;          // halaman aktif
-let filteredData = [];        // menyimpan hasil filter+sort sebelum dipaginasi
 let currentEditId = null;
 let currentTransaksiId = null;
 
-// State untuk filter & sortir keuangan
+// State untuk paginasi
+const PAGE_SIZE = 40;
+let currentPage = 1;
+let lastDocSnapshot = null;          // untuk navigasi "Selanjutnya"
+let firstDocSnapshot = null;         // untuk navigasi "Sebelumnya"
+let snapshotsPerPage = {};           // menyimpan snapshot setiap halaman
+let currentData = [];                // data yang sedang ditampilkan
+
+// State filter & sort tetap sama
 let filterStateKeuangan = {
     jenis: 'Semua',
     santriId: 'Semua',
     admin: 'Semua'
 };
 let sortStateKeuangan = 'tanggalDesc';
-let allTransaksiData = [];
+// Hapus variabel allTransaksiData, karena tidak digunakan lagi
 
 export function loadKeuangan(container) {
     renderKeuanganPage(container);
-    listenKeuangan();
+    loadAdminOptions();
+    loadSantriOptions(); // <-- tambahkan
+    fetchKeuanganPage(true);
+}
+
+async function loadAdminOptions() {
+    try {
+        const snapshot = await getDocs(collection(db, "admins"));
+        const admins = snapshot.docs.map(doc => doc.data().name);
+        const select = document.getElementById('filterAdminKeuanganModal');
+        if (!select) return;
+        const currentVal = select.value;
+        select.innerHTML = '<option value="Semua">Semua</option>';
+        admins.sort().forEach(admin => {
+            select.innerHTML += `<option value="${escapeHtml(admin)}">${escapeHtml(admin)}</option>`;
+        });
+        select.value = currentVal;
+    } catch (error) {
+        console.error("Gagal load admin options:", error);
+    }
+}
+
+async function loadSantriOptions() {
+    const snapshot = await getDocs(collection(db, "santri"));
+    const select = document.getElementById('filterSantriKeuanganModal');
+    if (!select) return;
+    const currentVal = select.value;
+    select.innerHTML = '<option value="Semua">Semua</option>';
+    snapshot.forEach(doc => {
+        const santri = doc.data();
+        select.innerHTML += `<option value="${doc.id}">${escapeHtml(santri.nama)}</option>`;
+    });
+    select.value = currentVal;
+}
+
+async function fetchKeuanganPage(resetPage = true) {
+    if (resetPage) {
+        currentPage = 1;
+        lastDocSnapshot = null;
+        firstDocSnapshot = null;
+        snapshotsPerPage = {};
+    }
+
+    // Bangun query dasar
+    let q = collection(db, "keuangan");
+
+    // Terapkan filter (hanya jika tidak "Semua")
+    if (filterStateKeuangan.jenis !== 'Semua') {
+        q = query(q, where("jenis", "==", filterStateKeuangan.jenis));
+    }
+    if (filterStateKeuangan.santriId !== 'Semua') {
+        q = query(q, where("santriId", "==", filterStateKeuangan.santriId));
+    }
+    if (filterStateKeuangan.admin !== 'Semua') {
+        q = query(q, where("admin", "==", filterStateKeuangan.admin));
+    }
+
+    // Tentukan urutan (hanya satu arah untuk paginasi yang konsisten)
+    let orderField = 'tanggal';
+    let orderDirection = 'desc';
+    if (sortStateKeuangan === 'tanggalAsc') {
+        orderDirection = 'asc';
+    } else {
+        // default desc
+    }
+    // Tambahkan field kedua untuk tie‑breaker
+    q = query(q, orderBy(orderField, orderDirection), orderBy("createdAt", "desc"));
+
+    // Terapkan paginasi berdasarkan snapshot yang disimpan
+    if (resetPage) {
+        // Halaman pertama
+        q = query(q, limit(PAGE_SIZE));
+    } else {
+        // Navigasi maju: gunakan lastDocSnapshot
+        if (lastDocSnapshot) {
+            q = query(q, startAfter(lastDocSnapshot), limit(PAGE_SIZE));
+        } else {
+            q = query(q, limit(PAGE_SIZE));
+        }
+    }
+
+    try {
+        const snapshot = await getDocs(q);
+        const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        currentData = data;
+
+        // Simpan snapshot untuk navigasi
+        if (snapshot.docs.length > 0) {
+            lastDocSnapshot = snapshot.docs[snapshot.docs.length - 1];
+            firstDocSnapshot = snapshot.docs[0];
+            snapshotsPerPage[currentPage] = {
+                first: snapshot.docs[0],
+                last: snapshot.docs[snapshot.docs.length - 1]
+            };
+        } else {
+            // Tidak ada data
+            lastDocSnapshot = null;
+            firstDocSnapshot = null;
+        }
+
+        renderKeuanganTable(data);
+        updatePaginationButtons(data.length === PAGE_SIZE);
+    } catch (error) {
+        console.error("Error fetching keuangan:", error);
+        await window.customAlert("Gagal mengambil data transaksi: " + error.message);
+    }
+}
+
+function updatePaginationButtons(hasMore) {
+    const prevBtn = document.getElementById('prevPageBtn');
+    const nextBtn = document.getElementById('nextPageBtn');
+    const pageInfo = document.getElementById('pageInfo');
+    if (prevBtn) prevBtn.disabled = (currentPage === 1);
+    if (nextBtn) nextBtn.disabled = !hasMore;
+    if (pageInfo) pageInfo.textContent = `Halaman ${currentPage}`;
 }
 
 function renderKeuanganPage(container) {
@@ -78,8 +196,6 @@ function renderKeuanganPage(container) {
                             <option value="jenis">Jenis</option>
                             <option value="jumlahDesc">Jumlah (terbesar)</option>
                             <option value="jumlahAsc">Jumlah (terkecil)</option>
-                            <option value="nomorAsc">Nomor Transaksi (lama ke baru)</option>
-                            <option value="nomorDesc">Nomor Transaksi (baru ke lama)</option>
                         </select>
                     </div>
                     <div class="form-group">
@@ -138,7 +254,6 @@ function renderKeuanganPage(container) {
         });
     }
 
-    updateFilterOptionsKeuangan();
 }
 
 // ===== MODAL FILTER =====
@@ -157,117 +272,29 @@ function closeFilterModalKeuangan() {
     if (modal) modal.style.display = 'none';
 }
 
-// ===== UPDATE OPSI FILTER DINAMIS =====
-function updateFilterOptionsKeuangan() {
-    const santriSet = new Set();
-    const adminSet = new Set();
-    allTransaksiData.forEach(t => {
-        if (t.santriId) santriSet.add(t.santriId);
-        if (t.admin) adminSet.add(t.admin);
-    });
-
-    const santriSelect = document.getElementById('filterSantriKeuanganModal');
-    const adminSelect = document.getElementById('filterAdminKeuanganModal');
-    if (santriSelect) {
-        const currentVal = santriSelect.value;
-        santriSelect.innerHTML = '<option value="Semua">Semua</option>';
-        const santriMap = {};
-        allTransaksiData.forEach(t => {
-            if (t.santriId && t.namaSantri) {
-                santriMap[t.santriId] = t.namaSantri;
-            }
-        });
-        Array.from(santriSet).sort().forEach(id => {
-            const nama = santriMap[id] || id;
-            santriSelect.innerHTML += `<option value="${escapeHtml(id)}">${escapeHtml(nama)}</option>`;
-        });
-        santriSelect.value = currentVal;
-    }
-    if (adminSelect) {
-        const currentVal = adminSelect.value;
-        adminSelect.innerHTML = '<option value="Semua">Semua</option>';
-        Array.from(adminSet).sort().forEach(admin => {
-            adminSelect.innerHTML += `<option value="${escapeHtml(admin)}">${escapeHtml(admin)}</option>`;
-        });
-        adminSelect.value = currentVal;
-    }
-}
-
 // ===== FILTER & SORTIR =====
 function applyFiltersAndSortKeuangan() {
-    const keyword = document.getElementById('searchKeuangan')?.value?.toLowerCase() || '';
-    let filtered = allTransaksiData.filter(t => {
-        if (keyword && !(t.namaSantri && t.namaSantri.toLowerCase().includes(keyword))) return false;
-        if (filterStateKeuangan.jenis !== 'Semua' && t.jenis !== filterStateKeuangan.jenis) return false;
-        if (filterStateKeuangan.santriId !== 'Semua' && t.santriId !== filterStateKeuangan.santriId) return false;
-        if (filterStateKeuangan.admin !== 'Semua' && t.admin !== filterStateKeuangan.admin) return false;
-        return true;
-    });
-
-    // Sorting (tambahkan kasus nomor transaksi)
-    switch (sortStateKeuangan) {
-        case 'tanggalDesc':
-            filtered.sort((a, b) => new Date(b.tanggal) - new Date(a.tanggal));
-            break;
-        case 'tanggalAsc':
-            filtered.sort((a, b) => new Date(a.tanggal) - new Date(b.tanggal));
-            break;
-        case 'namaSantri':
-            filtered.sort((a, b) => (a.namaSantri || '').localeCompare(b.namaSantri || ''));
-            break;
-        case 'jenis':
-            filtered.sort((a, b) => (a.jenis || '').localeCompare(b.jenis || ''));
-            break;
-        case 'jumlahDesc':
-            filtered.sort((a, b) => (b.jumlah || 0) - (a.jumlah || 0));
-            break;
-        case 'jumlahAsc':
-            filtered.sort((a, b) => (a.jumlah || 0) - (b.jumlah || 0));
-            break;
-        case 'nomorAsc':   // baru
-            filtered.sort((a, b) => (a.nomorTransaksi || '').localeCompare(b.nomorTransaksi || ''));
-            break;
-        case 'nomorDesc':  // baru
-            filtered.sort((a, b) => (b.nomorTransaksi || '').localeCompare(a.nomorTransaksi || ''));
-            break;
-        default: break;
-    }
-
-    filteredData = filtered;
-    currentPage = 1;                // kembali ke halaman pertama setiap kali filter/sort berubah
-    renderPagedKeuangan();
+    // Reset ke halaman pertama dan ambil ulang data
+    fetchKeuanganPage(true);
 }
 
-// ===== HITUNG DATA TAMPIL =====
-function renderPagedKeuangan() {
-    const totalItems = filteredData.length;
-    const totalPages = Math.ceil(totalItems / ITEMS_PER_PAGE) || 1;
-    if (currentPage > totalPages) currentPage = totalPages;
-    const start = (currentPage - 1) * ITEMS_PER_PAGE;
-    const end = Math.min(start + ITEMS_PER_PAGE, totalItems);
-    const pageItems = filteredData.slice(start, end);
-    renderKeuanganTable(pageItems, totalItems, currentPage, totalPages);
-}
 
 // ===== RENDER TABEL =====
-function renderKeuanganTable(transaksis, totalItems, currentPageNum, totalPages) {
+function renderKeuanganTable(transaksis) {
     const container = document.getElementById('keuanganTable');
     if (!container) return;
 
-    const totalSemua = allTransaksiData.length;
-
-    if (totalItems === 0) {
+    const total = transaksis.length;
+    if (transaksis.length === 0) {
         container.innerHTML = `
-            <div class="santri-count">Menampilkan 0 dari ${totalSemua} transaksi</div>
+            <div class="santri-count">Menampilkan 0 dari ${total} transaksi</div>
             <p style="margin: 10px; text-align: center; font-size: large;">Tidak ada transaksi.</p>
         `;
         return;
     }
 
     const isMobile = window.innerWidth <= 768;
-    let html = `<div class="santri-count">
-        Menampilkan ${transaksis.length} dari ${totalItems} transaksi (Halaman ${currentPageNum}/${totalPages})
-    </div>`;
+    let html = `<div class="santri-count">Menampilkan ${transaksis.length} dari ${total} transaksi</div>`;
     html += '<div class="table-container"><table class="keuangan-table">';
 
     if (isMobile) {
@@ -308,33 +335,48 @@ function renderKeuanganTable(transaksis, totalItems, currentPageNum, totalPages)
         });
     }
     html += `</tbody></table></div>`;
-
-    // === KONTROL PAGINASI ===
-    html += `<div class="pagination-controls" style="display:flex; justify-content:space-between; align-items:center; margin-top:1rem; flex-wrap:wrap; gap:0.5rem;">
-        <span>Halaman ${currentPageNum} dari ${totalPages}</span>
-        <div>
-            <button class="btn-secondary" id="prevPageBtn" ${currentPageNum <= 1 ? 'disabled' : ''}>Sebelumnya</button>
-            <button class="btn-secondary" id="nextPageBtn" ${currentPageNum >= totalPages ? 'disabled' : ''}>Berikutnya</button>
-        </div>
-    </div>`;
-
     container.innerHTML = html;
 
-    // Event listener untuk tombol paginasi
+    // Tambahkan navigasi paginasi
+    const navHtml = `
+        <div class="pagination-controls" style="display:flex; justify-content:space-between; align-items:center; margin-top:1rem;">
+            <button id="prevPageBtn" class="btn-secondary" ${currentPage === 1 ? 'disabled' : ''}>
+                <i class="fas fa-arrow-left"></i> Sebelumnya
+            </button>
+            <span id="pageInfo">Halaman ${currentPage}</span>
+            <button id="nextPageBtn" class="btn-secondary" ${transaksis.length < PAGE_SIZE ? 'disabled' : ''}>
+                Selanjutnya <i class="fas fa-arrow-right"></i>
+            </button>
+        </div>
+    `;
+    container.insertAdjacentHTML('beforeend', navHtml);
+
+    // Event listener untuk tombol navigasi
     document.getElementById('prevPageBtn')?.addEventListener('click', () => {
         if (currentPage > 1) {
-            currentPage--;
-            renderPagedKeuangan();
-        }
-    });
-    document.getElementById('nextPageBtn')?.addEventListener('click', () => {
-        if (currentPage < totalPages) {
-            currentPage++;
-            renderPagedKeuangan();
+            // Navigasi mundur: gunakan snapshot halaman sebelumnya
+            const prevPage = currentPage - 1;
+            const snap = snapshotsPerPage[prevPage];
+            if (snap) {
+                // Set firstDocSnapshot untuk digunakan startAt
+                // Kita akan ubah fetchKeuanganPage agar menerima parameter arah
+                // Untuk sederhana, kita buat fungsi terpisah untuk mundur
+                goToPage(prevPage);
+            } else {
+                // Jika snapshot tidak tersedia, reset ke halaman 1
+                fetchKeuanganPage(true);
+            }
         }
     });
 
-    // Event listener untuk link santri (sama seperti sebelumnya)
+    document.getElementById('nextPageBtn')?.addEventListener('click', () => {
+        if (transaksis.length === PAGE_SIZE) {
+            currentPage++;
+            fetchKeuanganPage(false); // tidak reset, pakai lastDocSnapshot
+        }
+    });
+
+    // Event listener untuk link santri
     document.querySelectorAll('.santri-link').forEach(link => {
         link.addEventListener('click', async (e) => {
             e.preventDefault();
@@ -353,39 +395,49 @@ function renderKeuanganTable(transaksis, totalItems, currentPageNum, totalPages)
     });
 }
 
-// ===== EKSPOR CSV =====
-async function exportKeuanganToCSV() {
-    const data = allTransaksiData;
-    if (data.length === 0) {
-        await window.customAlert("Tidak ada transaksi untuk diekspor.");
+async function goToPage(page) {
+    if (page < 1) page = 1;
+    const snap = snapshotsPerPage[page];
+    if (!snap) {
+        await window.customAlert("Halaman belum diambil. Kembali ke halaman 1.");
+        fetchKeuanganPage(true);
         return;
     }
-    const columns = ["nomorTransaksi", "tanggal", "namaSantri", "jenis", "jumlah", "admin", "keterangan"];
-    const rows = [columns];
-    for (const t of data) {
-        const row = columns.map(col => {
-            let value = t[col];
-            if (value === undefined || value === null) return '';
-            if (col === 'tanggal') value = formatTanggal(value);
-            if (col === 'jumlah') value = value.toString();
-            let str = String(value);
-            if (str.includes(',') || str.includes('"') || str.includes('\n')) {
-                str = '"' + str.replace(/"/g, '""') + '"';
-            }
-            return str;
-        });
-        rows.push(row);
+    let q = collection(db, "keuangan");
+    // Filter
+    if (filterStateKeuangan.jenis !== 'Semua') q = query(q, where("jenis", "==", filterStateKeuangan.jenis));
+    if (filterStateKeuangan.santriId !== 'Semua') q = query(q, where("santriId", "==", filterStateKeuangan.santriId));
+    if (filterStateKeuangan.admin !== 'Semua') q = query(q, where("admin", "==", filterStateKeuangan.admin));
+    // Order
+    let orderField = 'tanggal';
+    let orderDirection = 'desc';
+    if (sortStateKeuangan === 'tanggalAsc') orderDirection = 'asc';
+    q = query(q, orderBy(orderField, orderDirection), orderBy("createdAt", "desc"));
+    q = query(q, startAt(snap.first), limit(PAGE_SIZE));
+    
+    const snapshot = await getDocs(q);
+    const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    currentData = data;
+    currentPage = page;
+    if (snapshot.docs.length > 0) {
+        lastDocSnapshot = snapshot.docs[snapshot.docs.length - 1];
+        firstDocSnapshot = snapshot.docs[0];
     }
-    const csvContent = rows.map(row => row.join(',')).join('\n');
-    const blob = new Blob(["\uFEFF" + csvContent], { type: "text/csv;charset=utf-8;" });
-    const link = document.createElement("a");
-    const url = URL.createObjectURL(blob);
-    link.href = url;
-    link.setAttribute("download", `keuangan_export_${new Date().toISOString().slice(0,10)}.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
+    renderKeuanganTable(data);
+    updatePaginationButtons(data.length === PAGE_SIZE);
+}
+
+// ===== EKSPOR CSV =====
+async function exportKeuanganToCSV() {
+    let q = collection(db, "keuangan");
+    if (filterStateKeuangan.jenis !== 'Semua') q = query(q, where("jenis", "==", filterStateKeuangan.jenis));
+    if (filterStateKeuangan.santriId !== 'Semua') q = query(q, where("santriId", "==", filterStateKeuangan.santriId));
+    if (filterStateKeuangan.admin !== 'Semua') q = query(q, where("admin", "==", filterStateKeuangan.admin));
+    q = query(q, orderBy("tanggal", "desc"), orderBy("createdAt", "desc"));
+    const snapshot = await getDocs(q);
+    const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    if (data.length === 0) { await window.customAlert("Tidak ada transaksi."); return; }
+    // ... lanjutkan ekspor dengan data
 }
 
 // ===== IMPOR CSV =====
@@ -582,6 +634,15 @@ async function saveTransaksiForm() {
     if (!tanggal) return await window.customAlert("Pilih tanggal");
     const keterangan = document.getElementById('keteranganTransaksi').value;
     const admin = window.currentAdminName || auth.currentUser?.email || "Admin";
+    try {
+        const adminRef = doc(db, "admins", admin);
+        const adminSnap = await getDoc(adminRef);
+        if (!adminSnap.exists()) {
+            await setDoc(adminRef, { name: admin });
+        }
+    } catch (err) {
+        console.warn("Gagal menyimpan admin:", err);
+    }
 
     if (currentTransaksiId) {
         await window.customAlert("Edit transaksi tidak diizinkan untuk menjaga konsistensi saldo. Hapus dan buat baru.");
@@ -630,15 +691,6 @@ async function recalculateAllSaldo() {
         else runningSaldo -= trans.jumlah;
         await updateDoc(doc(db, "keuangan", trans.id), { saldo: runningSaldo });
     }
-}
-
-function listenKeuangan() {
-    if (unsubscribeKeuangan) unsubscribeKeuangan();
-    unsubscribeKeuangan = onSnapshot(collection(db, "keuangan"), (snapshot) => {
-        allTransaksiData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-        updateFilterOptionsKeuangan();
-        applyFiltersAndSortKeuangan();
-    });
 }
 
 // ===== FORM TRANSAKSI =====
