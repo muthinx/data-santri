@@ -23,7 +23,7 @@ function renderSantriPage(container) {
         <div id="santri-header-actions">
             <div class="header-left-buttons">
                 <button id="btnTambahSantriBaru" class="btn-primary"><i class="fas fa-plus"></i></button>
-                <button id="btnFilterSantri" class="btn-secondary"><i class="fas fa-sliders-h"></i> Filter</button>
+                <button id="btnFilterSantri" class="btn-secondary"><i class="fas fa-sliders-h"></i></button>
             </div>
             <div class="search-wrapper">
                 <i class="fas fa-search search-icon"></i>
