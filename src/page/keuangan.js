@@ -1,152 +1,50 @@
+// keuangan.js - Menampilkan daftar santri dengan saldo terakhir
+// Fitur: paginasi client-side, real-time (refresh otomatis), filter kelas & pencarian nama, detail transaksi santri
+// Versi tanpa tombol hapus semua transaksi
 import { db, auth } from '../firebase.js';
-import { collection, addDoc, updateDoc, deleteDoc, doc, onSnapshot, getDoc, getDocs, query, where, orderBy, writeBatch, setDoc, limit, startAfter, startAt } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+import {
+  collection, addDoc, updateDoc, deleteDoc, doc, onSnapshot,
+  getDoc, getDocs, query, where, orderBy, limit, startAfter,
+  writeBatch, getCountFromServer
+} from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
 
+let unsubscribeSantri = null;
+let unsubscribeTransaksi = null;
 let currentEditId = null;
 let currentTransaksiId = null;
 
-// State untuk paginasi
+// Konfigurasi paginasi
 const PAGE_SIZE = 40;
 let currentPage = 1;
-let lastDocSnapshot = null;          // untuk navigasi "Selanjutnya"
-let firstDocSnapshot = null;         // untuk navigasi "Sebelumnya"
-let snapshotsPerPage = {};           // menyimpan snapshot setiap halaman
-let currentData = [];                // data yang sedang ditampilkan
+let totalDocuments = 0;
 
-// State filter & sort tetap sama
-let filterStateKeuangan = {
-    jenis: 'Semua',
-    santriId: 'Semua',
-    admin: 'Semua'
+// State filter & sortir
+let filterState = {
+    kelas: 'Semua',
+    search: ''
 };
-let sortStateKeuangan = 'tanggalDesc';
-// Hapus variabel allTransaksiData, karena tidak digunakan lagi
+let sortState = 'kelasAsc';
 
+// Cache data santri & transaksi
+let allSantri = [];
+let allTransaksi = [];
+let santriSaldoMap = new Map();
+
+// Fungsi utama memuat halaman keuangan (daftar santri + saldo)
 export function loadKeuangan(container) {
     renderKeuanganPage(container);
-    loadAdminOptions();
-    loadSantriOptions(); // <-- tambahkan
-    fetchKeuanganPage(true);
+    currentPage = 1;
+    subscribeSantriDanTransaksi();
 }
 
-async function loadAdminOptions() {
-    try {
-        const snapshot = await getDocs(collection(db, "admins"));
-        const admins = snapshot.docs.map(doc => doc.data().name);
-        const select = document.getElementById('filterAdminKeuanganModal');
-        if (!select) return;
-        const currentVal = select.value;
-        select.innerHTML = '<option value="Semua">Semua</option>';
-        admins.sort().forEach(admin => {
-            select.innerHTML += `<option value="${escapeHtml(admin)}">${escapeHtml(admin)}</option>`;
-        });
-        select.value = currentVal;
-    } catch (error) {
-        console.error("Gagal load admin options:", error);
-    }
-}
-
-async function loadSantriOptions() {
-    const snapshot = await getDocs(collection(db, "santri"));
-    const select = document.getElementById('filterSantriKeuanganModal');
-    if (!select) return;
-    const currentVal = select.value;
-    select.innerHTML = '<option value="Semua">Semua</option>';
-    snapshot.forEach(doc => {
-        const santri = doc.data();
-        select.innerHTML += `<option value="${doc.id}">${escapeHtml(santri.nama)}</option>`;
-    });
-    select.value = currentVal;
-}
-
-async function fetchKeuanganPage(resetPage = true) {
-    if (resetPage) {
-        currentPage = 1;
-        lastDocSnapshot = null;
-        firstDocSnapshot = null;
-        snapshotsPerPage = {};
-    }
-
-    // Bangun query dasar
-    let q = collection(db, "keuangan");
-
-    // Terapkan filter (hanya jika tidak "Semua")
-    if (filterStateKeuangan.jenis !== 'Semua') {
-        q = query(q, where("jenis", "==", filterStateKeuangan.jenis));
-    }
-    if (filterStateKeuangan.santriId !== 'Semua') {
-        q = query(q, where("santriId", "==", filterStateKeuangan.santriId));
-    }
-    if (filterStateKeuangan.admin !== 'Semua') {
-        q = query(q, where("admin", "==", filterStateKeuangan.admin));
-    }
-
-    // Tentukan urutan (hanya satu arah untuk paginasi yang konsisten)
-    let orderField = 'tanggal';
-    let orderDirection = 'desc';
-    if (sortStateKeuangan === 'tanggalAsc') {
-        orderDirection = 'asc';
-    } else {
-        // default desc
-    }
-    // Tambahkan field kedua untuk tie‑breaker
-    q = query(q, orderBy(orderField, orderDirection), orderBy("createdAt", "desc"));
-
-    // Terapkan paginasi berdasarkan snapshot yang disimpan
-    if (resetPage) {
-        // Halaman pertama
-        q = query(q, limit(PAGE_SIZE));
-    } else {
-        // Navigasi maju: gunakan lastDocSnapshot
-        if (lastDocSnapshot) {
-            q = query(q, startAfter(lastDocSnapshot), limit(PAGE_SIZE));
-        } else {
-            q = query(q, limit(PAGE_SIZE));
-        }
-    }
-
-    try {
-        const snapshot = await getDocs(q);
-        const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-        currentData = data;
-
-        // Simpan snapshot untuk navigasi
-        if (snapshot.docs.length > 0) {
-            lastDocSnapshot = snapshot.docs[snapshot.docs.length - 1];
-            firstDocSnapshot = snapshot.docs[0];
-            snapshotsPerPage[currentPage] = {
-                first: snapshot.docs[0],
-                last: snapshot.docs[snapshot.docs.length - 1]
-            };
-        } else {
-            // Tidak ada data
-            lastDocSnapshot = null;
-            firstDocSnapshot = null;
-        }
-
-        renderKeuanganTable(data);
-        updatePaginationButtons(data.length === PAGE_SIZE);
-    } catch (error) {
-        console.error("Error fetching keuangan:", error);
-        await window.customAlert("Gagal mengambil data transaksi: " + error.message);
-    }
-}
-
-function updatePaginationButtons(hasMore) {
-    const prevBtn = document.getElementById('prevPageBtn');
-    const nextBtn = document.getElementById('nextPageBtn');
-    const pageInfo = document.getElementById('pageInfo');
-    if (prevBtn) prevBtn.disabled = (currentPage === 1);
-    if (nextBtn) nextBtn.disabled = !hasMore;
-    if (pageInfo) pageInfo.textContent = `Halaman ${currentPage}`;
-}
-
+// ===== RENDER UI =====
 function renderKeuanganPage(container) {
     container.innerHTML = `
         <div id="keuangan-page-container">
             <div id="keuangan-header-actions">
                 <div class="header-left-buttons">
                     <button id="btnTambahTransaksi" class="btn-primary"><i class="fas fa-plus"></i></button>
-                    <button id="btnFilterKeuangan" class="btn-secondary"><i class="fas fa-sliders-h"></i> Filter</button>
+                    <button id="btnFilterKeuangan" class="btn-secondary"><i class="fas fa-sliders-h"></i></button>
                 </div>
                 <div class="search-wrapper">
                     <i class="fas fa-search search-icon"></i>
@@ -167,11 +65,14 @@ function renderKeuanganPage(container) {
 
     // Event listeners
     document.getElementById('btnTambahTransaksi').onclick = () => showFormTransaksi();
-    document.getElementById('btnFilterKeuangan').onclick = () => openFilterModalKeuangan();
-    document.getElementById('btnExportKeuanganCSV').onclick = () => exportKeuanganToCSV();
+    document.getElementById('btnFilterKeuangan').onclick = () => openFilterModal();
     const searchInput = document.getElementById('searchKeuangan');
     if (searchInput) {
-        searchInput.addEventListener('input', () => applyFiltersAndSortKeuangan());
+        searchInput.addEventListener('input', (e) => {
+            filterState.search = e.target.value.trim().toLowerCase();
+            currentPage = 1;
+            applyFiltersAndSort();
+        });
     }
     const importBtn = document.getElementById('btnImportKeuanganCSV');
     const fileInput = document.getElementById('fileImportKeuanganCSV');
@@ -181,40 +82,26 @@ function renderKeuanganPage(container) {
         fileInput.value = '';
     };
 
-    // Buat modal filter keuangan (sekali di body)
+    // Buat modal filter sekali
     if (!document.getElementById('filterModalKeuangan')) {
         const modalHTML = `
             <div id="filterModalKeuangan" class="modal" style="display:none;">
                 <div class="modal-content">
-                    <h3><i class="fas fa-sliders-h"></i> Filter & Urutkan Transaksi</h3>
+                    <h3><i class="fas fa-sliders-h"></i> Filter & Urutkan Santri</h3>
                     <div class="form-group">
                         <label for="sortKeuanganModal">Urutkan</label>
                         <select id="sortKeuanganModal">
-                            <option value="tanggalDesc">Tanggal (terbaru)</option>
-                            <option value="tanggalAsc">Tanggal (terlama)</option>
-                            <option value="namaSantri">Nama Santri</option>
-                            <option value="jenis">Jenis</option>
-                            <option value="jumlahDesc">Jumlah (terbesar)</option>
-                            <option value="jumlahAsc">Jumlah (terkecil)</option>
+                            <option value="kelasAsc">Kelas Diniyah (A-Z)</option>
+                            <option value="kelasDesc">Kelas Diniyah (Z-A)</option>
+                            <option value="namaAsc">Nama Santri (A-Z)</option>
+                            <option value="namaDesc">Nama Santri (Z-A)</option>
+                            <option value="saldoTertinggi">Saldo Tertinggi</option>
+                            <option value="saldoTerendah">Saldo Terendah</option>
                         </select>
                     </div>
                     <div class="form-group">
-                        <label for="filterJenisKeuanganModal">Jenis Transaksi</label>
-                        <select id="filterJenisKeuanganModal">
-                            <option value="Semua">Semua</option>
-                            <option value="Pemasukan">Pemasukan</option>
-                            <option value="Pengeluaran">Pengeluaran</option>
-                        </select>
-                    </div>
-                    <div class="form-group">
-                        <label for="filterSantriKeuanganModal">Santri</label>
-                        <select id="filterSantriKeuanganModal">
-                            <option value="Semua">Semua</option>
-                        </select>
-                    </div>
-                    <div class="form-group">
-                        <label for="filterAdminKeuanganModal">Admin</label>
-                        <select id="filterAdminKeuanganModal">
+                        <label for="filterKelasKeuanganModal">Kelas Diniyah</label>
+                        <select id="filterKelasKeuanganModal">
                             <option value="Semua">Semua</option>
                         </select>
                     </div>
@@ -229,154 +116,252 @@ function renderKeuanganPage(container) {
         document.body.insertAdjacentHTML('beforeend', modalHTML);
 
         document.getElementById('applyFilterKeuanganBtn').onclick = () => {
-            sortStateKeuangan = document.getElementById('sortKeuanganModal').value;
-            filterStateKeuangan.jenis = document.getElementById('filterJenisKeuanganModal').value;
-            filterStateKeuangan.santriId = document.getElementById('filterSantriKeuanganModal').value;
-            filterStateKeuangan.admin = document.getElementById('filterAdminKeuanganModal').value;
-            applyFiltersAndSortKeuangan();
-            closeFilterModalKeuangan();
+            sortState = document.getElementById('sortKeuanganModal').value;
+            filterState.kelas = document.getElementById('filterKelasKeuanganModal').value;
+            currentPage = 1;
+            applyFiltersAndSort();
+            closeFilterModal();
         };
         document.getElementById('resetFilterKeuanganBtn').onclick = () => {
-            document.getElementById('sortKeuanganModal').value = 'tanggalDesc';
-            document.getElementById('filterJenisKeuanganModal').value = 'Semua';
-            document.getElementById('filterSantriKeuanganModal').value = 'Semua';
-            document.getElementById('filterAdminKeuanganModal').value = 'Semua';
-            sortStateKeuangan = 'tanggalDesc';
-            filterStateKeuangan.jenis = 'Semua';
-            filterStateKeuangan.santriId = 'Semua';
-            filterStateKeuangan.admin = 'Semua';
-            applyFiltersAndSortKeuangan();
-            closeFilterModalKeuangan();
+            document.getElementById('sortKeuanganModal').value = 'kelasAsc';
+            document.getElementById('filterKelasKeuanganModal').value = 'Semua';
+            sortState = 'kelasAsc';
+            filterState.kelas = 'Semua';
+            filterState.search = '';
+            const searchInput2 = document.getElementById('searchKeuangan');
+            if (searchInput2) searchInput2.value = '';
+            currentPage = 1;
+            applyFiltersAndSort();
+            closeFilterModal();
         };
-        document.getElementById('closeFilterKeuanganBtn').onclick = closeFilterModalKeuangan;
+        document.getElementById('closeFilterKeuanganBtn').onclick = closeFilterModal;
         document.getElementById('filterModalKeuangan').addEventListener('click', (e) => {
-            if (e.target === e.currentTarget) closeFilterModalKeuangan();
+            if (e.target === e.currentTarget) closeFilterModal();
         });
     }
 
+    updateKelasDropdown();
 }
 
-// ===== MODAL FILTER =====
-function openFilterModalKeuangan() {
-    const modal = document.getElementById('filterModalKeuangan');
-    if (!modal) return;
-    document.getElementById('sortKeuanganModal').value = sortStateKeuangan;
-    document.getElementById('filterJenisKeuanganModal').value = filterStateKeuangan.jenis;
-    document.getElementById('filterSantriKeuanganModal').value = filterStateKeuangan.santriId;
-    document.getElementById('filterAdminKeuanganModal').value = filterStateKeuangan.admin;
-    modal.style.display = 'flex';
+// ===== SUBSCRIBE REAL-TIME SANTRI & TRANSAKSI =====
+function subscribeSantriDanTransaksi() {
+    if (unsubscribeSantri) unsubscribeSantri();
+    if (unsubscribeTransaksi) unsubscribeTransaksi();
+
+    unsubscribeSantri = onSnapshot(collection(db, "santri"), (snapshot) => {
+        allSantri = [];
+        snapshot.forEach(doc => {
+            const data = doc.data();
+            allSantri.push({
+                id: doc.id,
+                nama: data.nama || '',
+                nisn: data.nisn || '',
+                kelasDiniyah: data.kepesantrenan?.kelasDiniyah || '',
+                kelasFormal: data.kepesantrenan?.kelasFormal || '',
+                asrama: data.kepesantrenan?.asrama || '',
+                ...data
+            });
+        });
+        updateKelasDropdown();
+        processData();
+    }, (error) => {
+        console.error("Error listening to santri:", error);
+    });
+
+    unsubscribeTransaksi = onSnapshot(collection(db, "keuangan"), (snapshot) => {
+        allTransaksi = [];
+        snapshot.forEach(doc => {
+            allTransaksi.push({ id: doc.id, ...doc.data() });
+        });
+        processData();
+    }, (error) => {
+        console.error("Error listening to keuangan:", error);
+    });
 }
 
-function closeFilterModalKeuangan() {
-    const modal = document.getElementById('filterModalKeuangan');
-    if (modal) modal.style.display = 'none';
+// ===== PROSES DATA =====
+function processData() {
+    santriSaldoMap = new Map();
+    allSantri.forEach(s => {
+        santriSaldoMap.set(s.id, {
+            id: s.id,
+            nama: s.nama,
+            kelasDiniyah: s.kelasDiniyah,
+            nisn: s.nisn,
+            kelasFormal: s.kelasFormal,
+            asrama: s.asrama,
+            saldo: 0,
+            transaksiCount: 0
+        });
+    });
+
+    const transaksiPerSantri = new Map();
+    allTransaksi.forEach(t => {
+        if (!t.santriId) return;
+        if (!transaksiPerSantri.has(t.santriId)) {
+            transaksiPerSantri.set(t.santriId, []);
+        }
+        transaksiPerSantri.get(t.santriId).push(t);
+    });
+
+    for (const [santriId, transaksis] of transaksiPerSantri) {
+        transaksis.sort((a, b) => {
+            if (a.tanggal !== b.tanggal) return a.tanggal.localeCompare(b.tanggal);
+            return (a.nomorTransaksi || '').localeCompare(b.nomorTransaksi || '');
+        });
+        let saldo = 0;
+        for (const t of transaksis) {
+            if (t.jenis === 'Pemasukan') saldo += (t.jumlah || 0);
+            else if (t.jenis === 'Pengeluaran') saldo -= (t.jumlah || 0);
+        }
+        if (santriSaldoMap.has(santriId)) {
+            const entry = santriSaldoMap.get(santriId);
+            entry.saldo = saldo;
+            entry.transaksiCount = transaksis.length;
+        } else {
+            const nama = transaksis[0]?.namaSantri || 'Santri tidak dikenal';
+            const kelas = transaksis[0]?.kelas || '';
+            santriSaldoMap.set(santriId, {
+                id: santriId,
+                nama: nama,
+                kelasDiniyah: kelas,
+                nisn: '',
+                kelasFormal: '',
+                asrama: '',
+                saldo: saldo,
+                transaksiCount: transaksis.length
+            });
+        }
+    }
+
+    applyFiltersAndSort();
 }
 
 // ===== FILTER & SORTIR =====
-function applyFiltersAndSortKeuangan() {
-    // Reset ke halaman pertama dan ambil ulang data
-    fetchKeuanganPage(true);
+function applyFiltersAndSort() {
+    const search = filterState.search || '';
+    const kelasFilter = filterState.kelas;
+
+    let filtered = Array.from(santriSaldoMap.values());
+
+    if (kelasFilter !== 'Semua') {
+        filtered = filtered.filter(s => s.kelasDiniyah === kelasFilter);
+    }
+
+    if (search) {
+        filtered = filtered.filter(s => s.nama.toLowerCase().includes(search));
+    }
+
+    switch (sortState) {
+        case 'kelasAsc':
+            filtered.sort((a, b) => a.kelasDiniyah.localeCompare(b.kelasDiniyah) || a.nama.localeCompare(b.nama));
+            break;
+        case 'kelasDesc':
+            filtered.sort((a, b) => b.kelasDiniyah.localeCompare(a.kelasDiniyah) || a.nama.localeCompare(b.nama));
+            break;
+        case 'namaAsc':
+            filtered.sort((a, b) => a.nama.localeCompare(b.nama));
+            break;
+        case 'namaDesc':
+            filtered.sort((a, b) => b.nama.localeCompare(a.nama));
+            break;
+        case 'saldoTertinggi':
+            filtered.sort((a, b) => b.saldo - a.saldo);
+            break;
+        case 'saldoTerendah':
+            filtered.sort((a, b) => a.saldo - b.saldo);
+            break;
+        default:
+            filtered.sort((a, b) => a.kelasDiniyah.localeCompare(b.kelasDiniyah) || a.nama.localeCompare(b.nama));
+    }
+
+    totalDocuments = filtered.length;
+    renderSantriTable(filtered);
 }
 
-
-// ===== RENDER TABEL =====
-function renderKeuanganTable(transaksis) {
+// ===== RENDER TABEL SANTRI =====
+function renderSantriTable(filteredData) {
     const container = document.getElementById('keuanganTable');
     if (!container) return;
 
-    const total = transaksis.length;
-    if (transaksis.length === 0) {
+    const isMobile = window.innerWidth <= 768;
+    const totalPages = Math.ceil(filteredData.length / PAGE_SIZE);
+    if (currentPage > totalPages) currentPage = 1;
+    if (currentPage < 1) currentPage = 1;
+    const startIdx = (currentPage - 1) * PAGE_SIZE;
+    const endIdx = Math.min(startIdx + PAGE_SIZE, filteredData.length);
+    const pageData = filteredData.slice(startIdx, endIdx);
+
+    const startIndex = startIdx + 1;
+    const endIndex = endIdx;
+
+    if (pageData.length === 0) {
         container.innerHTML = `
-            <div class="santri-count">Menampilkan 0 dari ${total} transaksi</div>
-            <p style="margin: 10px; text-align: center; font-size: large;">Tidak ada transaksi.</p>
+            <div class="santri-count">Menampilkan 0 dari ${totalDocuments} santri</div>
+            <p style="margin: 10px; text-align: center; font-size: large;">Tidak ada santri yang sesuai.</p>
         `;
         return;
     }
 
-    const isMobile = window.innerWidth <= 768;
-    let html = `<div class="santri-count">Menampilkan ${transaksis.length} dari ${total} transaksi</div>`;
+    let html = `<div class="santri-count">Menampilkan ${startIndex} - ${endIndex} dari ${totalDocuments} santri</div>`;
     html += '<div class="table-container"><table class="keuangan-table">';
 
     if (isMobile) {
-        html += `<thead><tr><th>Tanggal</th><th>Santri</th><th>Jenis</th><th>Jumlah</th><th>Aksi</th></tr></thead><tbody>`;
-        transaksis.forEach(trans => {
+        html += `<thead><tr><th>Nama</th><th>Kelas</th><th>Saldo</th></tr></thead><tbody>`;
+        pageData.forEach(s => {
             html += `<tr>
-                        <td>${formatTanggal(trans.tanggal)}</td>
-                        <td><a href="#" class="santri-link" data-id="${trans.santriId}">${escapeHtml(trans.namaSantri)}</a></td>
-                        <td style="color:${trans.jenis === 'Pemasukan' ? '#2e7d32' : '#c62828'}">${trans.jenis}</td>
-                        <td>Rp ${(trans.jumlah || 0).toLocaleString()}</td>
-                        <td class="action-cell">
-                            <button class="edit-transaksi-btn" data-id="${trans.id}">Edit</button>
-                        </td>
+                        <td><a href="#" class="santri-link" data-id="${s.id}">${escapeHtml(s.nama)}</a></td>
+                        <td>${escapeHtml(s.kelasDiniyah || '-')}</td>
+                        <td style="font-weight:bold; color:${s.saldo >= 0 ? '#2e7d32' : '#c62828'}">Rp ${(s.saldo || 0).toLocaleString()}</td>
                     </tr>`;
         });
     } else {
         html += `<thead><tr>
-                    <th>Nomor Transaksi</th>
-                    <th>Tanggal</th>
                     <th>Nama Santri</th>
-                    <th>Jenis</th>
-                    <th>Jumlah</th>
-                    <th>Admin</th>
+                    <th>Kelas Diniyah</th>
+                    <th>Saldo Terakhir</th>
+                    <th>Jumlah Transaksi</th>
                     <th>Aksi</th>
                 </tr></thead><tbody>`;
-        transaksis.forEach(trans => {
+        pageData.forEach(s => {
             html += `<tr>
-                        <td>${escapeHtml(trans.nomorTransaksi || '-')}</td>
-                        <td>${formatTanggal(trans.tanggal)}</td>
-                        <td><a href="#" class="santri-link" data-id="${trans.santriId}">${escapeHtml(trans.namaSantri)}</a></td>
-                        <td style="color:${trans.jenis === 'Pemasukan' ? '#2e7d32' : '#c62828'}">${trans.jenis}</td>
-                        <td>Rp ${(trans.jumlah || 0).toLocaleString()}</td>
-                        <td>${escapeHtml(trans.admin || '-')}</td>
+                        <td><a href="#" class="santri-link" data-id="${s.id}">${escapeHtml(s.nama)}</a></td>
+                        <td>${escapeHtml(s.kelasDiniyah || '-')}</td>
+                        <td style="font-weight:bold; color:${s.saldo >= 0 ? '#2e7d32' : '#c62828'}">Rp ${(s.saldo || 0).toLocaleString()}</td>
+                        <td>${s.transaksiCount || 0}</td>
                         <td class="action-cell">
-                            <button class="edit-transaksi-btn" data-id="${trans.id}">Edit</button>
+                            <button class="detail-transaksi-btn" data-id="${s.id}"><i class="fas fa-list"></i> Detail</button>
                         </td>
                     </tr>`;
         });
     }
     html += `</tbody></table></div>`;
+
+    const prevDisabled = currentPage <= 1;
+    const nextDisabled = currentPage >= totalPages;
+    html += `<div class="pagination-controls" style="display:flex; justify-content:space-between; align-items:center; margin-top:1rem; flex-wrap:wrap; gap:0.5rem;">
+        <span>Halaman ${currentPage} dari ${totalPages}</span>
+        <div>
+            <button class="btn-secondary" id="prevPageBtn" ${prevDisabled ? 'disabled' : ''}>Sebelumnya</button>
+            <button class="btn-secondary" id="nextPageBtn" ${nextDisabled ? 'disabled' : ''}>Berikutnya</button>
+        </div>
+    </div>`;
+
     container.innerHTML = html;
 
-    // Tambahkan navigasi paginasi
-    const navHtml = `
-        <div class="pagination-controls" style="display:flex; justify-content:space-between; align-items:center; margin-top:1rem;">
-            <button id="prevPageBtn" class="btn-secondary" ${currentPage === 1 ? 'disabled' : ''}>
-                <i class="fas fa-arrow-left"></i> Sebelumnya
-            </button>
-            <span id="pageInfo">Halaman ${currentPage}</span>
-            <button id="nextPageBtn" class="btn-secondary" ${transaksis.length < PAGE_SIZE ? 'disabled' : ''}>
-                Selanjutnya <i class="fas fa-arrow-right"></i>
-            </button>
-        </div>
-    `;
-    container.insertAdjacentHTML('beforeend', navHtml);
-
-    // Event listener untuk tombol navigasi
     document.getElementById('prevPageBtn')?.addEventListener('click', () => {
         if (currentPage > 1) {
-            // Navigasi mundur: gunakan snapshot halaman sebelumnya
-            const prevPage = currentPage - 1;
-            const snap = snapshotsPerPage[prevPage];
-            if (snap) {
-                // Set firstDocSnapshot untuk digunakan startAt
-                // Kita akan ubah fetchKeuanganPage agar menerima parameter arah
-                // Untuk sederhana, kita buat fungsi terpisah untuk mundur
-                goToPage(prevPage);
-            } else {
-                // Jika snapshot tidak tersedia, reset ke halaman 1
-                fetchKeuanganPage(true);
-            }
+            currentPage--;
+            applyFiltersAndSort();
         }
     });
-
     document.getElementById('nextPageBtn')?.addEventListener('click', () => {
-        if (transaksis.length === PAGE_SIZE) {
+        if (currentPage < totalPages) {
             currentPage++;
-            fetchKeuanganPage(false); // tidak reset, pakai lastDocSnapshot
+            applyFiltersAndSort();
         }
     });
 
-    // Event listener untuk link santri
     document.querySelectorAll('.santri-link').forEach(link => {
         link.addEventListener('click', async (e) => {
             e.preventDefault();
@@ -385,59 +370,76 @@ function renderKeuanganTable(transaksis) {
         });
     });
 
-    // Event listener untuk tombol Edit
-    document.querySelectorAll('.edit-transaksi-btn').forEach(btn => {
+    document.querySelectorAll('.detail-transaksi-btn').forEach(btn => {
         btn.addEventListener('click', async () => {
-            const id = btn.dataset.id;
-            const docSnap = await getDoc(doc(db, "keuangan", id));
-            if (docSnap.exists()) showFormTransaksi({ id, ...docSnap.data() });
+            const santriId = btn.dataset.id;
+            await showSantriKeuangan(santriId);
         });
     });
 }
 
-async function goToPage(page) {
-    if (page < 1) page = 1;
-    const snap = snapshotsPerPage[page];
-    if (!snap) {
-        await window.customAlert("Halaman belum diambil. Kembali ke halaman 1.");
-        fetchKeuanganPage(true);
-        return;
-    }
-    let q = collection(db, "keuangan");
-    // Filter
-    if (filterStateKeuangan.jenis !== 'Semua') q = query(q, where("jenis", "==", filterStateKeuangan.jenis));
-    if (filterStateKeuangan.santriId !== 'Semua') q = query(q, where("santriId", "==", filterStateKeuangan.santriId));
-    if (filterStateKeuangan.admin !== 'Semua') q = query(q, where("admin", "==", filterStateKeuangan.admin));
-    // Order
-    let orderField = 'tanggal';
-    let orderDirection = 'desc';
-    if (sortStateKeuangan === 'tanggalAsc') orderDirection = 'asc';
-    q = query(q, orderBy(orderField, orderDirection), orderBy("createdAt", "desc"));
-    q = query(q, startAt(snap.first), limit(PAGE_SIZE));
-    
-    const snapshot = await getDocs(q);
-    const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-    currentData = data;
-    currentPage = page;
-    if (snapshot.docs.length > 0) {
-        lastDocSnapshot = snapshot.docs[snapshot.docs.length - 1];
-        firstDocSnapshot = snapshot.docs[0];
-    }
-    renderKeuanganTable(data);
-    updatePaginationButtons(data.length === PAGE_SIZE);
+// ===== UPDATE DROPDOWN KELAS =====
+function updateKelasDropdown() {
+    const select = document.getElementById('filterKelasKeuanganModal');
+    if (!select) return;
+    const currentVal = select.value;
+    const kelasSet = new Set();
+    allSantri.forEach(s => {
+        if (s.kelasDiniyah) kelasSet.add(s.kelasDiniyah);
+    });
+    const kelasList = Array.from(kelasSet).sort();
+    select.innerHTML = '<option value="Semua">Semua</option>';
+    kelasList.forEach(k => {
+        select.innerHTML += `<option value="${escapeHtml(k)}">${escapeHtml(k)}</option>`;
+    });
+    select.value = currentVal;
+}
+
+// ===== MODAL FILTER =====
+function openFilterModal() {
+    const modal = document.getElementById('filterModalKeuangan');
+    if (!modal) return;
+    document.getElementById('sortKeuanganModal').value = sortState;
+    document.getElementById('filterKelasKeuanganModal').value = filterState.kelas;
+    modal.style.display = 'flex';
+}
+
+function closeFilterModal() {
+    const modal = document.getElementById('filterModalKeuangan');
+    if (modal) modal.style.display = 'none';
 }
 
 // ===== EKSPOR CSV =====
-async function exportKeuanganToCSV() {
-    let q = collection(db, "keuangan");
-    if (filterStateKeuangan.jenis !== 'Semua') q = query(q, where("jenis", "==", filterStateKeuangan.jenis));
-    if (filterStateKeuangan.santriId !== 'Semua') q = query(q, where("santriId", "==", filterStateKeuangan.santriId));
-    if (filterStateKeuangan.admin !== 'Semua') q = query(q, where("admin", "==", filterStateKeuangan.admin));
-    q = query(q, orderBy("tanggal", "desc"), orderBy("createdAt", "desc"));
-    const snapshot = await getDocs(q);
-    const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-    if (data.length === 0) { await window.customAlert("Tidak ada transaksi."); return; }
-    // ... lanjutkan ekspor dengan data
+async function exportSantriSaldoToCSV() {
+    const data = Array.from(santriSaldoMap.values());
+    if (data.length === 0) {
+        await window.customAlert("Tidak ada data santri untuk diekspor.");
+        return;
+    }
+    const columns = ["Nama", "Kelas Diniyah", "Saldo Terakhir", "Jumlah Transaksi", "NISN", "Kelas Formal", "Asrama"];
+    const rows = [columns];
+    for (const s of data) {
+        const row = [
+            `"${s.nama.replace(/"/g, '""')}"`,
+            `"${(s.kelasDiniyah || '').replace(/"/g, '""')}"`,
+            s.saldo || 0,
+            s.transaksiCount || 0,
+            `"${(s.nisn || '').replace(/"/g, '""')}"`,
+            `"${(s.kelasFormal || '').replace(/"/g, '""')}"`,
+            `"${(s.asrama || '').replace(/"/g, '""')}"`
+        ];
+        rows.push(row.join(','));
+    }
+    const csvContent = rows.join('\n');
+    const blob = new Blob(["\uFEFF" + csvContent], { type: "text/csv;charset=utf-8;" });
+    const link = document.createElement("a");
+    const url = URL.createObjectURL(blob);
+    link.href = url;
+    link.setAttribute("download", `saldo_santri_${new Date().toISOString().slice(0,10)}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
 }
 
 // ===== IMPOR CSV =====
@@ -450,12 +452,26 @@ async function importKeuanganFromCSV(file) {
             await window.customAlert("File CSV tidak memiliki data (minimal header + 1 baris data).");
             return;
         }
-        const headers = rows[0];
-        const expectedHeaders = ["nomorTransaksi", "tanggal", "namaSantri", "jenis", "jumlah", "admin", "keterangan"];
+
+        const santriSnapshot = await getDocs(collection(db, "santri"));
+        const santriMap = new Map();
+        santriSnapshot.forEach(doc => {
+            const data = doc.data();
+            const nama = data.nama;
+            if (nama) {
+                santriMap.set(nama.toLowerCase(), { id: doc.id, nama: nama, kelasDiniyah: data.kepesantrenan?.kelasDiniyah || '' });
+            }
+        });
+
+        const rawHeaders = rows[0];
         const headerIndex = {};
-        for (let i = 0; i < headers.length; i++) {
-            const h = headers[i].trim();
-            if (expectedHeaders.includes(h)) headerIndex[h] = i;
+        const expectedHeaders = ["nomorTransaksi", "tanggal", "namaSantri", "jenis", "jumlah", "admin", "keterangan"];
+        for (let i = 0; i < rawHeaders.length; i++) {
+            const h = rawHeaders[i].trim().toLowerCase();
+            const found = expectedHeaders.find(eh => eh.toLowerCase() === h);
+            if (found) {
+                headerIndex[found] = i;
+            }
         }
         const missing = expectedHeaders.filter(h => !(h in headerIndex));
         if (missing.length > 0) {
@@ -478,26 +494,42 @@ async function importKeuanganFromCSV(file) {
                 const idx = headerIndex[field];
                 obj[field] = (idx !== undefined && row[idx] !== undefined) ? row[idx].trim() : '';
             }
-            if (!obj.namaSantri) { errors.push(`Baris ${i+2}: namaSantri wajib diisi`); continue; }
-            if (!obj.tanggal) { errors.push(`Baris ${i+2}: tanggal wajib diisi`); continue; }
-            if (!obj.jenis || !["Pemasukan", "Pengeluaran"].includes(obj.jenis)) {
+
+            const namaSantri = obj.namaSantri;
+            if (!namaSantri) {
+                errors.push(`Baris ${i+2}: namaSantri wajib diisi`);
+                continue;
+            }
+            const santriKey = namaSantri.toLowerCase();
+            const santriData = santriMap.get(santriKey);
+            if (!santriData) {
+                errors.push(`Baris ${i+2}: santri dengan nama "${namaSantri}" tidak ditemukan`);
+                continue;
+            }
+            obj.santriId = santriData.id;
+            obj.namaSantri = santriData.nama;
+
+            if (!obj.tanggal) {
+                errors.push(`Baris ${i+2}: tanggal wajib diisi`);
+                continue;
+            }
+
+            const jenisLower = obj.jenis.toLowerCase();
+            if (!["pemasukan", "pengeluaran"].includes(jenisLower)) {
                 errors.push(`Baris ${i+2}: jenis harus 'Pemasukan' atau 'Pengeluaran'`);
                 continue;
             }
+            obj.jenis = jenisLower === "pemasukan" ? "Pemasukan" : "Pengeluaran";
+
             const jumlah = parseInt(obj.jumlah);
             if (isNaN(jumlah) || jumlah <= 0) {
                 errors.push(`Baris ${i+2}: jumlah harus angka positif`);
                 continue;
             }
             obj.jumlah = jumlah;
-            const santriQuery = query(collection(db, "santri"), where("nama", "==", obj.namaSantri));
-            const santriSnap = await getDocs(santriQuery);
-            if (santriSnap.empty) {
-                errors.push(`Baris ${i+2}: santri dengan nama "${obj.namaSantri}" tidak ditemukan`);
-                continue;
-            }
-            obj.santriId = santriSnap.docs[0].id;
-            if (!obj.admin) obj.admin = window.currentAdminName || auth.currentUser?.email || "Admin";
+
+            if (!obj.admin) obj.admin = auth.currentUser?.email || "Admin";
+
             transaksiData.push(obj);
         }
 
@@ -575,18 +607,7 @@ function parseCSV(text) {
     return rows.map(row => row.map(field => field.trim()));
 }
 
-// ===== CRUD =====
-async function loadSantriDropdown() {
-    const snap = await getDocs(collection(db, "santri"));
-    const select = document.getElementById('namaSantriSelect');
-    if (!select) return;
-    select.innerHTML = '<option value="">-- Pilih Santri --</option>';
-    snap.forEach(docSnap => {
-        const santri = docSnap.data();
-        select.innerHTML += `<option value="${docSnap.id}">${santri.nama}</option>`;
-    });
-}
-
+// ===== CRUD TRANSAKSI =====
 async function generateNomorTransaksi() {
     const today = new Date();
     const yyyy = today.getFullYear();
@@ -633,16 +654,7 @@ async function saveTransaksiForm() {
     const tanggal = document.getElementById('tglTransaksi').value;
     if (!tanggal) return await window.customAlert("Pilih tanggal");
     const keterangan = document.getElementById('keteranganTransaksi').value;
-    const admin = window.currentAdminName || auth.currentUser?.email || "Admin";
-    try {
-        const adminRef = doc(db, "admins", admin);
-        const adminSnap = await getDoc(adminRef);
-        if (!adminSnap.exists()) {
-            await setDoc(adminRef, { name: admin });
-        }
-    } catch (err) {
-        console.warn("Gagal menyimpan admin:", err);
-    }
+    const admin = auth.currentUser?.email || "Admin";
 
     if (currentTransaksiId) {
         await window.customAlert("Edit transaksi tidak diizinkan untuk menjaga konsistensi saldo. Hapus dan buat baru.");
@@ -652,7 +664,7 @@ async function saveTransaksiForm() {
         const lastSaldo = await getLastSaldo();
         const saldoTerbaru = jenis === "Pemasukan" ? lastSaldo + jumlah : lastSaldo - jumlah;
         const data = {
-            nomorTransaksi, santriId, namaSantri, jenis, jumlah, tanggal, keterangan, admin,
+            nomorTransaksi, santriId, namaSantri: namaSantriDoc, jenis, jumlah, tanggal, keterangan, admin,
             saldo: saldoTerbaru, createdAt: new Date().toISOString()
         };
         try {
@@ -722,12 +734,6 @@ async function showFormTransaksi(editData = null) {
     await loadSantriDatalist();
     const namaInput = document.getElementById('namaSantriInput');
     if (editData && editData.namaSantri) namaInput.value = editData.namaSantri;
-
-    loadSantriDropdown().then(() => {
-        if (editData && editData.santriId) {
-            document.getElementById('namaSantriSelect').value = editData.santriId;
-        }
-    });
 
     if (currentTransaksiId) {
         const formButtons = document.querySelector('#transaksiForm .form-buttons');
@@ -820,6 +826,21 @@ function fillTransaksiFormData(data) {
     document.getElementById('keteranganTransaksi').value = data.keterangan || '';
 }
 
+async function loadSantriDatalist() {
+    const snapshot = await getDocs(collection(db, "santri"));
+    const datalist = document.getElementById('santriDatalist');
+    if (!datalist) return;
+    datalist.innerHTML = '';
+    snapshot.forEach(doc => {
+        const santri = doc.data();
+        const option = document.createElement('option');
+        option.value = santri.nama;
+        option.setAttribute('data-id', doc.id);
+        option.textContent = `${santri.nama} (NISN: ${santri.nisn || '-'})`;
+        datalist.appendChild(option);
+    });
+}
+
 // ===== DETAIL KEUANGAN SANTRI =====
 async function showSantriKeuangan(santriId) {
     const santriDoc = await getDoc(doc(db, "santri", santriId));
@@ -850,7 +871,7 @@ async function showSantriKeuangan(santriId) {
     const detailHtml = `
         <div id="santri-keuangan-detail">
             <button id="backToKeuangan" class="btn-secondary" style="margin-bottom:1.5rem">
-                <i class="fas fa-arrow-left"></i> Kembali ke Semua Transaksi
+                <i class="fas fa-arrow-left"></i> Kembali ke Daftar Santri
             </button>
             <div class="santri-profile-card">
                 <div class="santri-avatar"><i class="fas fa-user-graduate"></i></div>
@@ -888,6 +909,9 @@ async function showSantriKeuangan(santriId) {
                 </div>
                 ${transaksiTerbaru.length === 0 ? '<p class="empty-state">Belum ada transaksi untuk santri ini.</p>' : ''}
             </div>
+            <div style="margin-top:1rem; display:flex; gap:0.5rem;">
+                <button id="btnTambahTransaksiSantri" class="btn-primary"><i class="fas fa-plus"></i> Tambah Transaksi</button>
+            </div>
         </div>
     `;
 
@@ -896,23 +920,19 @@ async function showSantriKeuangan(santriId) {
     document.getElementById('backToKeuangan').onclick = async () => {
         await loadKeuangan(mainContent);
     };
+    document.getElementById('btnTambahTransaksiSantri').onclick = () => {
+        showFormTransaksi(null);
+        setTimeout(() => {
+            const namaInput = document.getElementById('namaSantriInput');
+            if (namaInput) {
+                namaInput.value = santri.nama;
+                namaInput.dispatchEvent(new Event('input'));
+            }
+        }, 100);
+    };
 }
 
-async function loadSantriDatalist() {
-    const snapshot = await getDocs(collection(db, "santri"));
-    const datalist = document.getElementById('santriDatalist');
-    if (!datalist) return;
-    datalist.innerHTML = '';
-    snapshot.forEach(doc => {
-        const santri = doc.data();
-        const option = document.createElement('option');
-        option.value = santri.nama;
-        option.setAttribute('data-id', doc.id);
-        option.textContent = `${santri.nama} (NISN: ${santri.nisn || '-'})`;
-        datalist.appendChild(option);
-    });
-}
-
+// ===== UTILITY =====
 function formatTanggal(tgl) {
     if (!tgl) return '-';
     const parts = tgl.split('-');
