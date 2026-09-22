@@ -4,8 +4,10 @@
 
 import { db } from '../firebase.js';
 import {
-  collection, addDoc, updateDoc, deleteDoc, doc, onSnapshot, query, orderBy
+  collection, addDoc, updateDoc, deleteDoc, doc, onSnapshot, query, orderBy, getDocs
 } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+import { getCache, setCache, getServerVersion } from '../utils/cache.js';
+
 
 // ============================================================
 //  STATE MODUL
@@ -30,7 +32,7 @@ let searchKeyword = '';
 export function loadKelompokNgaji(container) {
   renderKelompokPage(container);
   listenKelompok();
-  listenSantriForCount();
+  loadSantriForCount();
 }
 
 // Dipanggil app.js saat pindah halaman / logout
@@ -39,10 +41,9 @@ export function cleanupKelompokNgaji() {
     unsubscribeKelompok();
     unsubscribeKelompok = null;
   }
-  if (unsubscribeSantri) {
-    unsubscribeSantri();
-    unsubscribeSantri = null;
-  }
+  // unsubscribeSantri tidak lagi aktif
+  unsubscribeSantri = null;
+
   allKelompokData = [];
   santriList = [];
   anggotaCountsCache = {};
@@ -187,27 +188,37 @@ function listenKelompok() {
 // - dropdown "tambah anggota" di detail
 // - refresh detail saat anggota berubah
 // - ekspor CSV
-function listenSantriForCount() {
-  if (unsubscribeSantri) unsubscribeSantri();
+async function loadSantriForCount() {
+  try {
+    const serverVersion = await getServerVersion('santri_version');
+    const cached = getCache('santri');
 
-  unsubscribeSantri = onSnapshot(
-    collection(db, "santri"),
-    (snapshot) => {
-      santriList = snapshot.docs.map((d) => ({ id: d.id, ...d.data() }));
-      recomputeAnggotaCounts();
-      applyFiltersAndSort();
+    let list;
+    if (cached && serverVersion !== null && cached.version === serverVersion) {
+      list = cached.data;
+    } else {
+      const snap = await getDocs(collection(db, "santri"));
+      list = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
 
-      // Kalau detail sedang terbuka, refresh
-      if (currentDetailKelompokId) {
-        const kelompok = allKelompokData.find((k) => k.id === currentDetailKelompokId);
-        if (kelompok) {
-          renderDetailAnggota(kelompok);
-          refreshDropdownSantri(kelompok);
-        }
+      if (serverVersion !== null) {
+        setCache('santri', serverVersion, list);
       }
-    },
-    (err) => console.error("santri listener error:", err)
-  );
+    }
+
+    santriList = list;
+    recomputeAnggotaCounts();
+    applyFiltersAndSort();
+
+    if (currentDetailKelompokId) {
+      const kelompok = allKelompokData.find((k) => k.id === currentDetailKelompokId);
+      if (kelompok) {
+        renderDetailAnggota(kelompok);
+        refreshDropdownSantri(kelompok);
+      }
+    }
+  } catch (err) {
+    console.error("Gagal load santri untuk hitung kelompok:", err);
+  }
 }
 
 function recomputeAnggotaCounts() {
