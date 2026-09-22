@@ -736,6 +736,7 @@ tr:hover {
 #santri-header-actions,
 #keuangan-header-actions,
 #asrama-header-actions,
+#pembayaran-header-actions,
 #kelompok-header-actions {
     display: flex;
     justify-content: space-between;
@@ -2490,4 +2491,18 @@ body.dark-mode #detailAsramaModal .santri-table td {
         padding: 8px 16px;
         font-size: 0.85rem;
     }
+}
+
+#pembayaran-page-container {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    max-height: calc(100vh - 140px);
+}
+
+#pembayaran-scroll-area {
+    flex: 1;
+    overflow-y: auto;
+    padding-right: 4px;
+    max-height: calc(100vh - 230px);
 }
