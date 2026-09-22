@@ -22,6 +22,7 @@ import { loadAsrama,        cleanupAsrama }         from './page/asrama.js';
 import { loadKelompokNgaji, cleanupKelompokNgaji }  from './page/kelompokngaji.js';
 import { loadObrolan,       cleanupObrolan }        from './page/obrolan.js';
 import { loadAbout } from './page/about.js';
+import { loadPembayaran, cleanupPembayaran } from './page/pembayaran.js';
 
 // ===== REGISTRASI HALAMAN =====
 // Setiap entri: { load, title, cleanup? }
@@ -57,6 +58,11 @@ const pages = {
     load: loadObrolan,
     title: 'Obrolan',
     cleanup: cleanupObrolan
+  },
+  pembayaran: {
+    load: loadPembayaran,
+    title: 'Pembayaran',
+    cleanup: cleanupPembayaran
   },
   about: {
     load: loadAbout,
