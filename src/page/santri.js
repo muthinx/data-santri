@@ -5,8 +5,14 @@
 import { db } from '../firebase.js';
 import {
   collection, doc, addDoc, updateDoc, deleteDoc, onSnapshot,
-  getDoc, getDocs, writeBatch, query, where, serverTimestamp
+  getDoc, getDocs, writeBatch, query, where,
+  increment, serverTimestamp, deleteField
 } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+
+import {
+  getServerVersion, setCache,
+  getMetaRef, versionIncrementPayload
+} from '../utils/cache.js';
 
 // ============================================================
 //  STATE MODUL
@@ -191,10 +197,20 @@ function listenSantri() {
 
   unsubscribeSantri = onSnapshot(
     collection(db, "santri"),
-    (snapshot) => {
+    async (snapshot) => {
       allSantriData = snapshot.docs.map((d) => ({ id: d.id, ...d.data() }));
       updateFilterOptions();
       applyFiltersAndSort();
+
+      // Simpan ke cache dengan versi server saat ini
+      try {
+        const v = await getServerVersion('santri_version');
+        if (v !== null) {
+          setCache('santri', v, allSantriData);
+        }
+      } catch (e) {
+        console.warn('Gagal update cache santri:', e);
+      }
     },
     (err) => console.error("santri listener error:", err)
   );
@@ -405,6 +421,13 @@ function showForm(editData = null) {
           const batch = writeBatch(db);
           batch.delete(doc(db, "santri", currentEditId));
           batch.delete(doc(db, "saldo_santri", currentEditId));
+          batch.set(getMetaRef('santri_version'), versionIncrementPayload(), { merge: true });
+          // BARU: hapus entry dari meta/saldo_semua
+          batch.update(getMetaRef('saldo_semua'), {
+            [`data.${currentEditId}`]: deleteField(),
+            version: increment(1),
+            updatedAt: serverTimestamp()
+          });
           await batch.commit();
           await window.customAlert('Data berhasil dihapus');
           hideForm();
@@ -714,10 +737,10 @@ async function saveSantri() {
       const batch = writeBatch(db);
       batch.update(doc(db, "santri", currentEditId), data);
       batch.set(doc(db, "saldo_santri", currentEditId), saldoPayload, { merge: true });
+      batch.set(getMetaRef('santri_version'), versionIncrementPayload(), { merge: true });
       await batch.commit();
       await window.customAlert("Data santri berhasil diupdate");
     } else {
-      // Generate ID dulu supaya bisa tulis ke dua koleksi sekaligus
       const newSantriRef = doc(collection(db, "santri"));
       const newSantriId = newSantriRef.id;
 
@@ -729,6 +752,13 @@ async function saveSantri() {
         saldo: 0,
         transaksiCount: 0
       });
+      batch.set(getMetaRef('santri_version'), versionIncrementPayload(), { merge: true });
+      // BARU: daftarkan di meta/saldo_semua
+      batch.set(getMetaRef('saldo_semua'), {
+        [`data.${newSantriId}`]: { saldo: 0, count: 0 },
+        version: increment(1),
+        updatedAt: serverTimestamp()
+      }, { merge: true });
       await batch.commit();
       await window.customAlert("Santri berhasil ditambahkan");
     }
@@ -736,6 +766,7 @@ async function saveSantri() {
   } catch (err) {
     await window.customAlert("Error: " + err.message);
   }
+  
 }
 
 // ============================================================
@@ -874,10 +905,21 @@ async function importFromCSV(file) {
         if (chunk.length > 0) await batch.commit();
       }
 
+      if (successCount > 0) {
+        try {
+          const batch = writeBatch(db);
+          batch.set(getMetaRef('santri_version'), versionIncrementPayload(), { merge: true });
+          await batch.commit();
+        } catch (e) {
+          console.warn('Gagal increment versi santri setelah impor:', e);
+        }
+      }
+
       await window.customAlert(
         `Impor selesai. Sukses: ${successCount}, Gagal: ${errorCount}` +
         (errors.length ? `\nDetail:\n${errors.slice(0, 5).join('\n')}${errors.length > 5 ? `\n... dan ${errors.length - 5} lainnya` : ''}` : '')
       );
+
     } catch (err) {
       console.error("Import error:", err);
       await window.customAlert("Gagal impor: " + err.message);
