@@ -3,8 +3,10 @@
 
 import { db } from '../firebase.js';
 import {
-  collection, addDoc, updateDoc, deleteDoc, doc, onSnapshot
+  collection, addDoc, updateDoc, deleteDoc, doc, onSnapshot, getDocs
 } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+import { getCache, setCache, getServerVersion } from '../utils/cache.js';
+
 
 // ============================================================
 //  STATE MODUL
@@ -28,7 +30,7 @@ let sortStateAsrama = 'namaAsc';
 export function loadAsrama(container) {
   renderAsramaPage(container);
   listenAsrama();
-  listenSantriForCount();
+  loadSantriForCount();
 }
 
 // Dipanggil app.js saat pindah halaman / logout
@@ -37,10 +39,9 @@ export function cleanupAsrama() {
     unsubscribeAsrama();
     unsubscribeAsrama = null;
   }
-  if (unsubscribeSantri) {
-    unsubscribeSantri();
-    unsubscribeSantri = null;
-  }
+  // unsubscribeSantri tidak lagi dipakai, tapi tetap reset variabelnya
+  unsubscribeSantri = null;
+
   allAsramaData = [];
   santriList = [];
   anggotaCountsCache = null;
@@ -58,7 +59,7 @@ function renderAsramaPage(container) {
     <div id="asrama-header-actions">
       <div class="header-left-buttons">
         <button id="tambahAsramaBtn" class="btn-primary"><i class="fas fa-plus"></i></button>
-        <button id="btnFilterAsrama" class="btn-secondary"><i class="fas fa-sliders-h"></i> Filter</button>
+        <button id="btnFilterAsrama" class="btn-secondary"><i class="fas fa-sliders-h"></i></button>
       </div>
       <div class="search-wrapper">
         <i class="fas fa-search search-icon"></i>
@@ -206,23 +207,37 @@ function listenAsrama() {
 // Catatan: listener ini membaca seluruh koleksi santri. Kalau nanti
 // santri bertambah banyak dan read jadi masalah, ganti ke getDocs
 // + tombol refresh manual, atau pindahkan hitungan ke Cloud Function.
-function listenSantriForCount() {
-  if (unsubscribeSantri) unsubscribeSantri();
+// Cache-first: cek versi, kalau sama pakai cache, kalau beda fetch ulang
+async function loadSantriForCount() {
+  try {
+    const serverVersion = await getServerVersion('santri_version');
+    const cached = getCache('santri');
 
-  unsubscribeSantri = onSnapshot(
-    collection(db, "santri"),
-    (snapshot) => {
-      santriList = snapshot.docs.map((d) => ({ id: d.id, ...d.data() }));
-      recomputeAnggotaCounts();
-      applyFiltersAndSortAsrama();
+    let list;
+    if (cached && serverVersion !== null && cached.version === serverVersion) {
+      // Cache hit — tidak fetch
+      list = cached.data;
+    } else {
+      // Cache miss — fetch dari Firestore
+      const snap = await getDocs(collection(db, "santri"));
+      list = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
 
-      // Kalau modal detail sedang terbuka, refresh isinya
-      if (currentDetailAsramaNama) {
-        renderDetailAnggota(currentDetailAsramaNama);
+      if (serverVersion !== null) {
+        setCache('santri', serverVersion, list);
       }
-    },
-    (err) => console.error("santri listener error:", err)
-  );
+    }
+
+    santriList = list;
+    recomputeAnggotaCounts();
+    applyFiltersAndSortAsrama();
+
+    // Kalau modal detail sedang terbuka, refresh
+    if (currentDetailAsramaNama) {
+      renderDetailAnggota(currentDetailAsramaNama);
+    }
+  } catch (err) {
+    console.error("Gagal load santri untuk hitung asrama:", err);
+  }
 }
 
 function recomputeAnggotaCounts() {
