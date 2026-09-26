@@ -1,22 +1,20 @@
-// keuangan.js — v3
-// Halaman keuangan dengan cache-first rendering.
-// Saldo diambil dari meta/saldo_semua (1 read), bukan onSnapshot 370 dokumen.
+// keuangan.js — v4
+// Halaman keuangan dengan realtime listener ke koleksi saldo_santri.
+// Tidak lagi memakai cache meta/saldo_semua.
 
 import { db, auth } from '../firebase.js';
 import {
   collection, doc, onSnapshot, getDocs, getDoc, setDoc,
   query, where, orderBy, limit,
-  writeBatch, increment, serverTimestamp, runTransaction, deleteField
+  writeBatch, increment, serverTimestamp, runTransaction
 } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
-import {
-  getCache, setCache, getServerVersion, getMetaRef
-} from '../utils/cache.js';
 
 // ============================================================
 //  STATE
 // ============================================================
 let saldoSantriList = [];     // data gabungan identitas + saldo
 let currentTransaksiId = null;
+let saldoUnsubscribe = null;  // unsubscribe untuk onSnapshot saldo_santri
 
 const PAGE_SIZE = 40;
 let currentPage = 1;
@@ -35,6 +33,10 @@ export function loadKeuangan(container) {
 }
 
 export function cleanupKeuangan() {
+  if (saldoUnsubscribe) {
+    saldoUnsubscribe();
+    saldoUnsubscribe = null;
+  }
   saldoSantriList = [];
   currentTransaksiId = null;
   currentPage = 1;
@@ -43,81 +45,52 @@ export function cleanupKeuangan() {
 }
 
 // ============================================================
-//  LOAD DATA — cache-first, background refresh
+//  LOAD DATA — realtime listener ke saldo_santri
 // ============================================================
-async function loadKeuanganData() {
-  // 1. CACHE-FIRST: render instan dari cache
-  const santriCache = getCache('santri');
-  const saldoCache = getCache('saldo_semua');
-
-  if (santriCache && saldoCache) {
-    saldoSantriList = mergeSantriSaldo(santriCache.data, saldoCache.data);
-    updateKelasDropdown();
-    applyFiltersAndSort();
-  } else {
-    const container = document.getElementById('keuanganTable');
-    if (container) {
-      container.innerHTML = `
-        <div style="display:flex;justify-content:center;padding:2rem;color:var(--primary);">
-          <i class="fas fa-spinner fa-spin fa-2x"></i>
-        </div>`;
-    }
+function loadKeuanganData() {
+  const container = document.getElementById('keuanganTable');
+  if (container) {
+    container.innerHTML = `
+      <div style="display:flex;justify-content:center;padding:2rem;color:var(--primary);">
+        <i class="fas fa-spinner fa-spin fa-2x"></i>
+      </div>`;
   }
 
-  // 2. BACKGROUND: refresh dari Firestore
-  try {
-    // Pastikan data santri tersedia (cache hit atau fetch ulang)
-    let santriData = santriCache?.data;
-    if (!santriData) {
-      const serverVersion = await getServerVersion('santri_version');
-      const snap = await getDocs(collection(db, "santri"));
-      santriData = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
-      if (serverVersion !== null) {
-        setCache('santri', serverVersion, santriData);
-      }
-    }
+  // Hentikan listener lama jika ada
+  if (saldoUnsubscribe) {
+    saldoUnsubscribe();
+    saldoUnsubscribe = null;
+  }
 
-    // Baca meta/saldo_semua (1 read)
-    const metaSnap = await getDoc(doc(db, "meta", "saldo_semua"));
-    if (metaSnap.exists()) {
-      const metaData = metaSnap.data();
-      const serverVersion = metaData.version || 0;
-      const saldoData = metaData.data || {};
-
-      setCache('saldo_semua', serverVersion, saldoData);
-
-      saldoSantriList = mergeSantriSaldo(santriData, saldoData);
+  saldoUnsubscribe = onSnapshot(
+    collection(db, "saldo_santri"),
+    (snap) => {
+      saldoSantriList = snap.docs.map((d) => {
+        const data = d.data() || {};
+        return {
+          id: d.id,
+          nama: data.nama || '',
+          nisn: data.nisn || '',
+          kelasDiniyah: data.kelasDiniyah || '',
+          kelasFormal: data.kelasFormal || '',
+          asrama: data.asrama || '',
+          saldo: data.saldo || 0,
+          transaksiCount: data.transaksiCount || 0
+        };
+      });
       updateKelasDropdown();
       applyFiltersAndSort();
-    }
-  } catch (err) {
-    console.error('Gagal refresh saldo:', err);
-    // Kalau cache juga kosong dan fetch gagal, tampilkan pesan
-    if (!santriCache || !saldoCache) {
-      const container = document.getElementById('keuanganTable');
-      if (container) {
-        container.innerHTML = `<p style="color:red;text-align:center;padding:2rem;">
+    },
+    (err) => {
+      console.error('Gagal memuat saldo_santri:', err);
+      const c = document.getElementById('keuanganTable');
+      if (c) {
+        c.innerHTML = `<p style="color:red;text-align:center;padding:2rem;">
           Gagal memuat data. Silakan refresh halaman.
         </p>`;
       }
     }
-  }
-}
-
-function mergeSantriSaldo(santriList, saldoData) {
-  return santriList.map((s) => {
-    const sd = saldoData[s.id] || { saldo: 0, count: 0 };
-    return {
-      id: s.id,
-      nama: s.nama || '',
-      nisn: s.nisn || '',
-      kelasDiniyah: s.kepesantrenan?.kelasDiniyah || '',
-      kelasFormal: s.kepesantrenan?.kelasFormal || '',
-      asrama: s.kepesantrenan?.asrama || '',
-      saldo: sd.saldo || 0,
-      transaksiCount: sd.count || 0
-    };
-  });
+  );
 }
 
 // ============================================================
@@ -428,14 +401,16 @@ async function showSantriKeuangan(santriId) {
     return;
   }
 
-  const asc = [...transaksi].reverse();
-  let running = 0;
-  const withSaldo = asc.map((t) => {
-    if (t.jenis === "Pemasukan") running += t.jumlah;
-    else running -= t.jumlah;
-    return { ...t, saldoHitung: running };
+  // ---- Saldo berjalan mundur (backward) dari saldo akhir ----
+  // transaksi diurutkan: terbaru -> terlama (index 0 = paling baru)
+  // saldoHitung = saldo setelah transaksi tsb terjadi
+  const transaksiTerbaru = transaksi.map((t) => ({ ...t }));
+  let running = santri.saldo || 0;
+  transaksiTerbaru.forEach((t) => {
+    t.saldoHitung = running;
+    const delta = t.jenis === "Pemasukan" ? t.jumlah : -t.jumlah;
+    running -= delta;
   });
-  const transaksiTerbaru = [...withSaldo].reverse();
 
   const detailHtml = `
     <div id="santri-keuangan-detail">
@@ -468,6 +443,7 @@ async function showSantriKeuangan(santriId) {
                 <th>Nomor</th>
                 <th>Jenis</th>
                 <th>Jumlah</th>
+                <th>Saldo</th>
                 <th>Keterangan</th>
                 <th>Admin</th>
                 <th>Aksi</th>
@@ -483,6 +459,9 @@ async function showSantriKeuangan(santriId) {
                     ${t.jenis}
                   </td>
                   <td>Rp ${(t.jumlah || 0).toLocaleString('id-ID')}</td>
+                  <td style="font-weight:bold;color:${t.saldoHitung >= 0 ? '#2e7d32' : '#c62828'}">
+                    Rp ${(t.saldoHitung || 0).toLocaleString('id-ID')}
+                  </td>
                   <td>${escapeHtml(t.keterangan || '-')}</td>
                   <td>${escapeHtml(t.admin || '-')}</td>
                   <td class="action-cell">
@@ -687,7 +666,7 @@ async function saveTransaksiForm() {
       createdAt: new Date().toISOString()
     });
 
-    // 2. Update saldo_santri (untuk audit & rebuild)
+    // 2. Update saldo_santri — sumber realtime utama
     batch.set(doc(db, "saldo_santri", santri.id), {
       santriId: santri.id,
       nama: santri.nama,
@@ -700,18 +679,7 @@ async function saveTransaksiForm() {
       updatedAt: serverTimestamp()
     }, { merge: true });
 
-    // 3. Update meta/saldo_semua — sumber baca cepat
-    batch.set(getMetaRef('saldo_semua'), {
-      [`data.${santri.id}.saldo`]: increment(delta),
-      [`data.${santri.id}.count`]: increment(1),
-      version: increment(1),
-      updatedAt: serverTimestamp()
-    }, { merge: true });
-
     await batch.commit();
-
-    // Update cache lokal agar tidak perlu tunggu refresh
-    updateCacheAfterTransaction(santri.id, delta, 1);
 
     await window.customAlert("Transaksi berhasil disimpan");
     hideFormTransaksi();
@@ -720,27 +688,10 @@ async function saveTransaksiForm() {
     if (document.getElementById('santri-keuangan-detail')) {
       await showSantriKeuangan(santri.id);
     }
+    // Tidak perlu refresh tabel — listener onSnapshot akan otomatis update.
   } catch (err) {
     console.error(err);
     await window.customAlert("Gagal simpan: " + err.message);
-  }
-}
-
-function updateCacheAfterTransaction(santriId, deltaSaldo, deltaCount) {
-  const cached = getCache('saldo_semua');
-  if (!cached) return;
-  if (!cached.data[santriId]) {
-    cached.data[santriId] = { saldo: 0, count: 0 };
-  }
-  cached.data[santriId].saldo += deltaSaldo;
-  cached.data[santriId].count += deltaCount;
-  setCache('saldo_semua', cached.version, cached.data);
-
-  // Update juga di memori
-  const s = saldoSantriList.find((x) => x.id === santriId);
-  if (s) {
-    s.saldo += deltaSaldo;
-    s.transaksiCount += deltaCount;
   }
 }
 
@@ -769,16 +720,8 @@ async function deleteTransaksi(id) {
       transaksiCount: increment(-1),
       updatedAt: serverTimestamp()
     }, { merge: true });
-    batch.set(getMetaRef('saldo_semua'), {
-      [`data.${t.santriId}.saldo`]: increment(delta),
-      [`data.${t.santriId}.count`]: increment(-1),
-      version: increment(1),
-      updatedAt: serverTimestamp()
-    }, { merge: true });
 
     await batch.commit();
-
-    updateCacheAfterTransaction(t.santriId, delta, -1);
 
     await window.customAlert("Transaksi dihapus.");
     return true;
@@ -796,10 +739,11 @@ async function exportSantriSaldoToCSV() {
   if (saldoSantriList.length === 0) {
     return await window.customAlert("Tidak ada data santri untuk diekspor.");
   }
-  const columns = ["Nama", "Kelas Diniyah", "Saldo Terakhir", "Jumlah Transaksi", "NISN", "Kelas Formal", "Asrama"];
+  const columns = ["ID", "Nama", "Kelas Diniyah", "Saldo Terakhir", "Jumlah Transaksi", "NISN", "Kelas Formal", "Asrama"];
   const rows = [columns];
   for (const s of saldoSantriList) {
     rows.push([
+      `"${(s.id || '').replace(/"/g, '""')}"`,
       `"${(s.nama || '').replace(/"/g, '""')}"`,
       `"${(s.kelasDiniyah || '').replace(/"/g, '""')}"`,
       s.saldo || 0,
@@ -823,6 +767,8 @@ async function exportSantriSaldoToCSV() {
 
 // ============================================================
 //  IMPOR CSV
+//  Header CSV wajib: nisn, tanggal, jenis, jumlah, admin, keterangan
+//  (nomorTransaksi di-generate otomatis oleh sistem)
 // ============================================================
 async function importKeuanganFromCSV(file) {
   const reader = new FileReader();
@@ -833,14 +779,15 @@ async function importKeuanganFromCSV(file) {
         return await window.customAlert("File CSV tidak memiliki data.");
       }
 
-      const santriMap = new Map();
+      // Bangun map: NISN -> data santri (pakai ID/NISN sebagai key, bukan nama)
+      const santriMapByNisn = new Map();
       saldoSantriList.forEach((s) => {
-        if (s.nama) santriMap.set(s.nama.toLowerCase(), s);
+        if (s.nisn) santriMapByNisn.set(String(s.nisn).trim().toLowerCase(), s);
       });
 
       const rawHeaders = rows[0];
       const headerIndex = {};
-      const expectedHeaders = ["nomorTransaksi", "tanggal", "namaSantri", "jenis", "jumlah", "admin", "keterangan"];
+      const expectedHeaders = ["nisn", "tanggal", "jenis", "jumlah", "admin", "keterangan"];
       for (let i = 0; i < rawHeaders.length; i++) {
         const h = rawHeaders[i].trim().toLowerCase();
         const found = expectedHeaders.find((eh) => eh.toLowerCase() === h);
@@ -848,7 +795,9 @@ async function importKeuanganFromCSV(file) {
       }
       const missing = expectedHeaders.filter((h) => !(h in headerIndex));
       if (missing.length > 0) {
-        return await window.customAlert(`Header CSV tidak lengkap. Hilang: ${missing.join(', ')}`);
+        return await window.customAlert(
+          `Header CSV tidak lengkap. Wajib ada: ${expectedHeaders.join(', ')}.\nHilang: ${missing.join(', ')}`
+        );
       }
 
       const dataRows = rows.slice(1).filter((row) => row.some((c) => c.trim() !== ""));
@@ -869,10 +818,10 @@ async function importKeuanganFromCSV(file) {
           obj[field] = (idx !== undefined && row[idx] !== undefined) ? row[idx].trim() : '';
         }
 
-        const namaSantri = obj.namaSantri;
-        if (!namaSantri) { errors.push(`Baris ${i + 2}: namaSantri wajib`); continue; }
-        const santriData = santriMap.get(namaSantri.toLowerCase());
-        if (!santriData) { errors.push(`Baris ${i + 2}: santri "${namaSantri}" tidak ditemukan`); continue; }
+        const nisnKey = (obj.nisn || '').toLowerCase();
+        if (!nisnKey) { errors.push(`Baris ${i + 2}: NISN wajib`); continue; }
+        const santriData = santriMapByNisn.get(nisnKey);
+        if (!santriData) { errors.push(`Baris ${i + 2}: NISN "${obj.nisn}" tidak ditemukan`); continue; }
         if (!obj.tanggal) { errors.push(`Baris ${i + 2}: tanggal wajib`); continue; }
 
         const jenisLower = obj.jenis.toLowerCase();
@@ -912,18 +861,25 @@ async function importKeuanganFromCSV(file) {
       const ok = await window.customConfirm(`Akan mengimpor ${transaksiData.length} transaksi. Lanjutkan?`);
       if (!ok) return;
 
+      // --- Reserve blok nomor transaksi secara aman (1x transaksi atomik) ---
       const today = new Date();
       const dateStr = `${today.getFullYear()}${String(today.getMonth() + 1).padStart(2, '0')}${String(today.getDate()).padStart(2, '0')}`;
       const counterRef = doc(db, "counters", `trx_${dateStr}`);
-      const counterSnap = await getDoc(counterRef);
-      let lastNumber = counterSnap.exists() ? (counterSnap.data().last || 0) : 0;
+      let startNumber = 1;
+      await runTransaction(db, async (trx) => {
+        const snap = await trx.get(counterRef);
+        const last = snap.exists() ? (snap.data().last || 0) : 0;
+        startNumber = last + 1;
+        trx.set(counterRef, { last: last + transaksiData.length, date: dateStr }, { merge: true });
+      });
 
-      transaksiData.forEach((t) => {
-        lastNumber++;
-        t.nomorTransaksi = `TRX-${dateStr}-${String(lastNumber).padStart(4, '0')}`;
+      transaksiData.forEach((t, idx) => {
+        const n = startNumber + idx;
+        t.nomorTransaksi = `TRX-${dateStr}-${String(n).padStart(4, '0')}`;
         t.createdAt = new Date().toISOString();
       });
 
+      // --- Tulis transaksi secara batch ---
       const BATCH_SIZE = 400;
       for (let i = 0; i < transaksiData.length; i += BATCH_SIZE) {
         const batch = writeBatch(db);
@@ -933,32 +889,19 @@ async function importKeuanganFromCSV(file) {
         await batch.commit();
       }
 
-      // Update saldo_santri + meta/saldo_semua
+      // --- Update saldo_santri saja (tanpa meta/saldo_semua) ---
       const saldoEntries = Array.from(deltaPerSantri.entries());
       for (let i = 0; i < saldoEntries.length; i += BATCH_SIZE) {
         const batch = writeBatch(db);
-        const metaUpdate = { version: increment(1), updatedAt: serverTimestamp() };
-
         saldoEntries.slice(i, i + BATCH_SIZE).forEach(([sid, delta]) => {
           batch.set(doc(db, "saldo_santri", sid), {
             saldo: increment(delta),
             transaksiCount: increment(countPerSantri.get(sid) || 0),
             updatedAt: serverTimestamp()
           }, { merge: true });
-
-          metaUpdate[`data.${sid}.saldo`] = increment(delta);
-          metaUpdate[`data.${sid}.count`] = increment(countPerSantri.get(sid) || 0);
         });
-
-        batch.set(getMetaRef('saldo_semua'), metaUpdate, { merge: true });
         await batch.commit();
       }
-
-      await setDoc(counterRef, { last: lastNumber, date: dateStr }, { merge: true });
-
-      // Reset cache saldo_semua agar refresh dari server
-      // (karena banyak perubahan, biar user lihat data baru)
-      localStorage.removeItem('app_cache_saldo_semua');
 
       await window.customAlert(`Impor selesai: ${transaksiData.length} transaksi.`);
     } catch (err) {
